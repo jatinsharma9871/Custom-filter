@@ -1,69 +1,24 @@
+import { createClient } from "@supabase/supabase-js";
 
-import fetch from "node-fetch";
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE
+);
 
 export default async function handler(req, res) {
+
   const { minPrice, maxPrice, vendor, productType } = req.query;
 
-  const SHOP = process.env.SHOPIFY_STORE;
-  const TOKEN = process.env.SHOPIFY_ADMIN_TOKEN;
+  let query = supabase.from("products").select("*");
 
-  const query = `
-    {
-      products(first: 250) {
-        edges {
-          node {
-            id
-            title
-            handle
-            vendor
-            productType
-            variants(first: 1) {
-              edges {
-                node {
-                  price
-                }
-              }
-            }
-            images(first: 1) {
-              edges {
-                node {
-                  url
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  `;
+  if (minPrice) query = query.gte("price", minPrice);
+  if (maxPrice) query = query.lte("price", maxPrice);
+  if (vendor) query = query.eq("vendor", vendor);
+  if (productType) query = query.eq("product_type", productType);
 
-  const response = await fetch(
-    `https://${SHOP}/admin/api/2024-01/graphql.json`,
-    {
-      method: "POST",
-      headers: {
-        "X-Shopify-Access-Token": TOKEN,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ query })
-    }
-  );
+  const { data, error } = await query.limit(1000);
 
-  const data = await response.json();
+  if (error) return res.status(500).json(error);
 
-  let products = data.data.products.edges.map(p => p.node);
-
-  // Apply filters
-  products = products.filter(p => {
-    const price = parseFloat(p.variants.edges[0].node.price);
-
-    if (minPrice && price < parseFloat(minPrice)) return false;
-    if (maxPrice && price > parseFloat(maxPrice)) return false;
-    if (vendor && p.vendor !== vendor) return false;
-    if (productType && p.productType !== productType) return false;
-
-    return true;
-  });
-
-  res.status(200).json(products);
+  res.status(200).json(data);
 }
