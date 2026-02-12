@@ -7,32 +7,32 @@ const supabase = createClient(
 
 export default async function handler(req, res) {
 
-  // ✅ Always set CORS headers first
+  // CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Access-Control-Max-Age", "86400");
 
-  // ✅ Handle preflight properly
   if (req.method === "OPTIONS") {
     return res.status(200).json({ ok: true });
   }
 
   try {
 
-   const { collection, minPrice, maxPrice, vendor, productType } = req.query;
+    const { collection, minPrice, maxPrice, vendor, productType } = req.query;
 
-// Filter only that collection
-let baseQuery = supabase
-  .from("products")
-  .select("vendor, product_type, price")
-  .eq("collection_handle", collection);
+    if (!collection) {
+      return res.status(400).json({ error: "Collection required" });
+    }
 
-const { data: allProducts, error: metaError } = await baseQuery;
-let query = supabase
-  .from("products")
-  .select("*")
-  .eq("collection_handle", collection);
+    /* =========================
+       FETCH COLLECTION PRODUCTS
+    ========================== */
+
+    const { data: allProducts, error: metaError } = await supabase
+      .from("products")
+      .select("vendor, product_type, price")
+      .eq("collection_handle", collection);
 
     if (metaError) throw metaError;
 
@@ -47,7 +47,10 @@ let query = supabase
        APPLY FILTERS
     ========================== */
 
-    let query = supabase.from("products").select("*");
+    let query = supabase
+      .from("products")
+      .select("*")
+      .eq("collection_handle", collection);
 
     if (minPrice) query = query.gte("price", minPrice);
     if (maxPrice) query = query.lte("price", maxPrice);
