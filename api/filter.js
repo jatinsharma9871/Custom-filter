@@ -7,52 +7,64 @@ const supabase = createClient(
 
 export default async function handler(req, res) {
 
+  // ✅ Always set CORS headers first
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Max-Age", "86400");
 
+  // ✅ Handle preflight properly
   if (req.method === "OPTIONS") {
-    return res.status(200).end();
+    return res.status(200).json({ ok: true });
   }
 
-  const { minPrice, maxPrice, vendor, productType } = req.query;
+  try {
 
-  /* =========================
-     FETCH FILTER LABELS
-  ========================== */
+    const { minPrice, maxPrice, vendor, productType } = req.query;
 
-  const { data: allProducts } = await supabase
-    .from("products")
-    .select("vendor, product_type, price");
+    /* =========================
+       FETCH FILTER LABELS
+    ========================== */
 
-  const vendors = [...new Set(allProducts.map(p => p.vendor).filter(Boolean))];
-  const productTypes = [...new Set(allProducts.map(p => p.product_type).filter(Boolean))];
+    const { data: allProducts, error: metaError } = await supabase
+      .from("products")
+      .select("vendor, product_type, price");
 
-  const prices = allProducts.map(p => parseFloat(p.price));
-  const min = Math.min(...prices);
-  const max = Math.max(...prices);
+    if (metaError) throw metaError;
 
-  /* =========================
-     APPLY FILTERS
-  ========================== */
+    const vendors = [...new Set(allProducts.map(p => p.vendor).filter(Boolean))];
+    const productTypes = [...new Set(allProducts.map(p => p.product_type).filter(Boolean))];
 
-  let query = supabase.from("products").select("*");
+    const prices = allProducts.map(p => parseFloat(p.price));
+    const min = prices.length ? Math.min(...prices) : 0;
+    const max = prices.length ? Math.max(...prices) : 0;
 
-  if (minPrice) query = query.gte("price", minPrice);
-  if (maxPrice) query = query.lte("price", maxPrice);
-  if (vendor) query = query.eq("vendor", vendor);
-  if (productType) query = query.eq("product_type", productType);
+    /* =========================
+       APPLY FILTERS
+    ========================== */
 
-  const { data: filtered, error } = await query.limit(1000);
+    let query = supabase.from("products").select("*");
 
-  if (error) return res.status(500).json(error);
+    if (minPrice) query = query.gte("price", minPrice);
+    if (maxPrice) query = query.lte("price", maxPrice);
+    if (vendor) query = query.eq("vendor", vendor);
+    if (productType) query = query.eq("product_type", productType);
 
-  res.status(200).json({
-    filters: {
-      vendors,
-      productTypes,
-      priceRange: { min, max }
-    },
-    products: filtered
-  });
+    const { data: filtered, error } = await query.limit(1000);
+
+    if (error) throw error;
+
+    return res.status(200).json({
+      filters: {
+        vendors,
+        productTypes,
+        priceRange: { min, max }
+      },
+      products: filtered
+    });
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message });
+  }
 }
