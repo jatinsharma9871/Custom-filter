@@ -20,15 +20,19 @@ export default async function handler(req, res) {
 
   try {
 
-    const { minPrice, maxPrice, vendor, productType } = req.query;
+   const { collection, minPrice, maxPrice, vendor, productType } = req.query;
 
-    /* =========================
-       FETCH FILTER LABELS
-    ========================== */
+// Filter only that collection
+let baseQuery = supabase
+  .from("products")
+  .select("vendor, product_type, price")
+  .eq("collection_handle", collection);
 
-    const { data: allProducts, error: metaError } = await supabase
-      .from("products")
-      .select("vendor, product_type, price");
+const { data: allProducts, error: metaError } = await baseQuery;
+let query = supabase
+  .from("products")
+  .select("*")
+  .eq("collection_handle", collection);
 
     if (metaError) throw metaError;
 
