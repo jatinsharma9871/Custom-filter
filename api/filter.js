@@ -31,6 +31,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Collection required" });
     }
 
+    
     const formattedCollection = formatCollection(collection);
 
     /* =========================
@@ -40,7 +41,8 @@ export default async function handler(req, res) {
     const { data: allProducts, error: metaError } = await supabase
       .from("products")
       .select("vendor, product_type, price")
-      .eq("product_type", formattedCollection);
+   .ilike("product_type", formattedCollection)
+
 
     if (metaError) throw metaError;
 
