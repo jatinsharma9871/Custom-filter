@@ -41,7 +41,8 @@ export default async function handler(req, res) {
     const { data: allProducts, error: metaError } = await supabase
       .from("products")
       .select("vendor, product_type, price")
-   .ilike("product_type", formattedCollection)
+   .eq("collection", collection)
+
 
 
     if (metaError) throw metaError;
