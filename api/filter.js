@@ -6,7 +6,6 @@ const supabase = createClient(
 );
 
 function formatCollection(handle) {
-  // convert: mini-bags → Mini Bags
   return handle
     .split("-")
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
@@ -25,39 +24,29 @@ export default async function handler(req, res) {
 
   try {
 
-    const { collection, minPrice, maxPrice, vendor, productType } = req.query;
+    const { collection, minPrice, maxPrice, vendor } = req.query;
 
     if (!collection) {
       return res.status(400).json({ error: "Collection required" });
     }
 
-    
     const formattedCollection = formatCollection(collection);
 
-    /* =========================
-       FETCH COLLECTION PRODUCTS
-    ========================== */
-
+    // 🔥 Fetch products by product_type (your real data column)
     const { data: allProducts, error: metaError } = await supabase
       .from("products")
       .select("vendor, product_type, price")
-   .eq("collection", collection)
-
-
+      .eq("product_type", formattedCollection);
 
     if (metaError) throw metaError;
 
     const vendors = [...new Set(allProducts.map(p => p.vendor).filter(Boolean))];
-    const productTypes = [...new Set(allProducts.map(p => p.product_type).filter(Boolean))];
 
     const prices = allProducts.map(p => parseFloat(p.price));
     const min = prices.length ? Math.min(...prices) : 0;
     const max = prices.length ? Math.max(...prices) : 0;
 
-    /* =========================
-       APPLY FILTERS
-    ========================== */
-
+    // 🔥 Apply filters
     let query = supabase
       .from("products")
       .select("*")
@@ -74,7 +63,6 @@ export default async function handler(req, res) {
     return res.status(200).json({
       filters: {
         vendors,
-        productTypes,
         priceRange: { min, max }
       },
       products: filtered
