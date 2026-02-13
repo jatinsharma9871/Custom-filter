@@ -5,13 +5,19 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE
 );
 
+function formatCollection(handle) {
+  // convert: mini-bags → Mini Bags
+  return handle
+    .split("-")
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 export default async function handler(req, res) {
 
-  // CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.setHeader("Access-Control-Max-Age", "86400");
 
   if (req.method === "OPTIONS") {
     return res.status(200).json({ ok: true });
@@ -25,6 +31,8 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Collection required" });
     }
 
+    const formattedCollection = formatCollection(collection);
+
     /* =========================
        FETCH COLLECTION PRODUCTS
     ========================== */
@@ -32,7 +40,7 @@ export default async function handler(req, res) {
     const { data: allProducts, error: metaError } = await supabase
       .from("products")
       .select("vendor, product_type, price")
-      .eq("collection_handle", collection);
+      .eq("product_type", formattedCollection);
 
     if (metaError) throw metaError;
 
@@ -50,12 +58,11 @@ export default async function handler(req, res) {
     let query = supabase
       .from("products")
       .select("*")
-      .eq("collection_handle", collection);
+      .eq("product_type", formattedCollection);
 
     if (minPrice) query = query.gte("price", minPrice);
     if (maxPrice) query = query.lte("price", maxPrice);
     if (vendor) query = query.eq("vendor", vendor);
-    if (productType) query = query.eq("product_type", productType);
 
     const { data: filtered, error } = await query.limit(1000);
 
