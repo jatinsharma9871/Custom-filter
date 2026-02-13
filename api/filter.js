@@ -5,13 +5,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE
 );
 
-function formatCollection(handle) {
-  return handle
-    .split("-")
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
-}
-
 export default async function handler(req, res) {
 
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -30,27 +23,41 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Collection required" });
     }
 
-    const formattedCollection = formatCollection(collection);
+    /* =========================
+       FETCH COLLECTION PRODUCTS
+    ========================== */
 
-    // 🔥 Fetch products by product_type (your real data column)
     const { data: allProducts, error: metaError } = await supabase
       .from("products")
-      .select("vendor, product_type, price")
-      .eq("collection", collection)
+      .select("vendor, price")
+      .eq("collection", collection);
 
     if (metaError) throw metaError;
+
+    if (!allProducts || allProducts.length === 0) {
+      return res.status(200).json({
+        filters: {
+          vendors: [],
+          priceRange: { min: 0, max: 0 }
+        },
+        products: []
+      });
+    }
 
     const vendors = [...new Set(allProducts.map(p => p.vendor).filter(Boolean))];
 
     const prices = allProducts.map(p => parseFloat(p.price));
-    const min = prices.length ? Math.min(...prices) : 0;
-    const max = prices.length ? Math.max(...prices) : 0;
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
 
-    // 🔥 Apply filters
+    /* =========================
+       APPLY FILTERS
+    ========================== */
+
     let query = supabase
       .from("products")
       .select("*")
-      .eq("product_type", formattedCollection);
+      .eq("collection", collection);
 
     if (minPrice) query = query.gte("price", minPrice);
     if (maxPrice) query = query.lte("price", maxPrice);
