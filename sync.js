@@ -53,16 +53,30 @@ async function syncProducts() {
 
     const data = await response.json();
 
-    const products = data.data.products.edges.map(p => ({
-      id: p.node.id,
-      title: p.node.title,
-      handle: p.node.handle,
-      vendor: p.node.vendor,
-      product_type: p.node.productType,
-      price: parseFloat(p.node.variants.edges[0]?.node.price || 0),
-      image: p.node.images.edges[0]?.node.url || null,
-      tags: p.node.tags
-    }));
+   const products = data.data.products.edges.map(p => {
+
+  const tags = p.node.tags || [];
+
+  const extractTag = (prefix) => {
+    const found = tags.find(t => t.startsWith(prefix + "_"));
+    return found ? found.replace(prefix + "_", "") : null;
+  };
+
+  return {
+    id: p.node.id,
+    title: p.node.title,
+    handle: p.node.handle,
+    vendor: p.node.vendor,
+    product_type: p.node.productType,
+    price: parseFloat(p.node.variants.edges[0]?.node.price || 0),
+    image: p.node.images.edges[0]?.node.url || null,
+    color: extractTag("Color"),
+    size: extractTag("Size"),
+    fabric: extractTag("Fabric"),
+    delivery_time: extractTag("Delivery"),
+    collection: extractTag("Collection") // if you use collection tags
+  };
+});
 
     await supabase.from("products").upsert(products);
 
