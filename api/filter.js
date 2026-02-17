@@ -32,9 +32,11 @@ res.setHeader("Expires", "0");
        FETCH ALL COLLECTION PRODUCTS
     ========================== */
 
-    const { data: allProducts, error: metaError } = await supabase
-      .from("products")
-      .select("*")
+  const { data: allProducts, error: metaError } = await supabase
+  .from("products")
+  .select("*")
+  .ilike("product_type", collection);
+
       
 
     if (metaError) throw metaError;
@@ -63,9 +65,12 @@ res.setHeader("Expires", "0");
        APPLY FILTERS
     ========================== */
 
-    let query = supabase
-      .from("products")
-      .select("*")
+   let query = supabase
+  .from("products")
+  .select("*")
+ .ilike("product_type", collection.replace(/-/g, " "));
+
+
     
 
     if (minPrice) query = query.gte("price", minPrice);
