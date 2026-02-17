@@ -10,6 +10,10 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+res.setHeader("Pragma", "no-cache");
+res.setHeader("Expires", "0");
+
 
   if (req.method === "OPTIONS") {
     return res.status(200).json({ ok: true });
@@ -31,7 +35,7 @@ export default async function handler(req, res) {
     const { data: allProducts, error: metaError } = await supabase
       .from("products")
       .select("*")
-      .eq("collection", collection);
+      
 
     if (metaError) throw metaError;
 
@@ -62,7 +66,7 @@ export default async function handler(req, res) {
     let query = supabase
       .from("products")
       .select("*")
-      .eq("collection", collection);
+    
 
     if (minPrice) query = query.gte("price", minPrice);
     if (maxPrice) query = query.lte("price", maxPrice);

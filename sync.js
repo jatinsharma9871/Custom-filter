@@ -58,8 +58,10 @@ async function syncProducts() {
   const tags = p.node.tags || [];
 
   const extractTag = (prefix) => {
-    const found = tags.find(t => t.startsWith(prefix + "_"));
-    return found ? found.replace(prefix + "_", "") : null;
+    const found = tags.find(t =>
+      t.toLowerCase().startsWith(prefix.toLowerCase() + "_")
+    );
+    return found ? found.split("_")[1] : null;
   };
 
   return {
@@ -70,47 +72,19 @@ async function syncProducts() {
     product_type: p.node.productType,
     price: parseFloat(p.node.variants.edges[0]?.node.price || 0),
     image: p.node.images.edges[0]?.node.url || null,
+
     color: extractTag("Color"),
     size: extractTag("Size"),
     fabric: extractTag("Fabric"),
     delivery_time: extractTag("Delivery"),
-    collection: extractTag("Collection") // if you use collection tags
+
+    collection: p.node.productType
   };
 });
 
-    await supabase.from("products").upsert(products);
-const products = data.data.products.edges.map(p => {
+await supabase.from("products").upsert(products);
 
-  const tags = p.node.tags || [];
 
-  // Normalize tags
-  const normalizedTags = tags.map(t => t.trim().toLowerCase());
-
-  const COLORS = ["red", "blue", "green", "black", "white", "pink", "yellow"];
-  const SIZES = ["xs", "s", "m", "l", "xl", "xxl"];
-  const FABRICS = ["silk", "cotton", "linen", "georgette"];
-  const DELIVERY = ["5days", "7days", "10days"];
-
-  const findMatch = (list) =>
-    list.find(item => normalizedTags.includes(item)) || null;
-
-  return {
-    id: p.node.id,
-    title: p.node.title,
-    handle: p.node.handle,
-    vendor: p.node.vendor,
-    product_type: p.node.productType,
-    price: parseFloat(p.node.variants.edges[0]?.node.price || 0),
-    image: p.node.images.edges[0]?.node.url || null,
-    tags: tags,
-    collection: p.node.productType,
-
-    color: findMatch(COLORS),
-    size: findMatch(SIZES),
-    fabric: findMatch(FABRICS),
-    delivery_time: findMatch(DELIVERY)
-  };
-});
 
     hasNextPage = data.data.products.pageInfo.hasNextPage;
     cursor = data.data.products.pageInfo.endCursor;
