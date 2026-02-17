@@ -79,6 +79,38 @@ async function syncProducts() {
 });
 
     await supabase.from("products").upsert(products);
+const products = data.data.products.edges.map(p => {
+
+  const tags = p.node.tags || [];
+
+  // Normalize tags
+  const normalizedTags = tags.map(t => t.trim().toLowerCase());
+
+  const COLORS = ["red", "blue", "green", "black", "white", "pink", "yellow"];
+  const SIZES = ["xs", "s", "m", "l", "xl", "xxl"];
+  const FABRICS = ["silk", "cotton", "linen", "georgette"];
+  const DELIVERY = ["5days", "7days", "10days"];
+
+  const findMatch = (list) =>
+    list.find(item => normalizedTags.includes(item)) || null;
+
+  return {
+    id: p.node.id,
+    title: p.node.title,
+    handle: p.node.handle,
+    vendor: p.node.vendor,
+    product_type: p.node.productType,
+    price: parseFloat(p.node.variants.edges[0]?.node.price || 0),
+    image: p.node.images.edges[0]?.node.url || null,
+    tags: tags,
+    collection: p.node.productType,
+
+    color: findMatch(COLORS),
+    size: findMatch(SIZES),
+    fabric: findMatch(FABRICS),
+    delivery_time: findMatch(DELIVERY)
+  };
+});
 
     hasNextPage = data.data.products.pageInfo.hasNextPage;
     cursor = data.data.products.pageInfo.endCursor;
