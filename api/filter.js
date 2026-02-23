@@ -25,22 +25,19 @@ export default async function handler(req, res) {
     }
 
     /* ---------- NORMALIZE ---------- */
-
-    const normalizedCollection =
-      collection.toLowerCase();
+    const normalizedCollection = String(collection).toLowerCase();
 
     /* ---------- BASE QUERY ---------- */
+    let query = supabase
+      .from("products")
+      .select("*")
+      .contains("collection_handle", [normalizedCollection]);
 
-    const normalizedCollection = collection.toLowerCase();
-
-let query = supabase
-  .from("products")
-  .select("*")
-  .contains("collection_handle", [collection])
-
+    /* ---------- PRICE FILTER ---------- */
     if (minPrice) query = query.gte("price", minPrice);
     if (maxPrice) query = query.lte("price", maxPrice);
 
+    /* ---------- VENDOR FILTER ---------- */
     if (vendor) {
       const vendors = Array.isArray(vendor)
         ? vendor
@@ -53,7 +50,6 @@ let query = supabase
     if (error) throw error;
 
     /* ---------- BUILD FILTER META ---------- */
-
     const vendors = [
       ...new Set(products.map(p => p.vendor).filter(Boolean))
     ];
