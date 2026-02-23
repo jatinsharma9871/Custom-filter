@@ -43,7 +43,10 @@ export default async function handler(req, res) {
     const { data: allProducts, error: metaError } = await supabase
       .from("products")
       .select("*")
-      .eq("collection_handle", collection);
+      const normalizedCollection =
+  collection.replace(/-/g, " ");
+
+.eq("product_type", normalizedCollection);
 
     if (metaError) throw metaError;
 
@@ -79,7 +82,10 @@ export default async function handler(req, res) {
     let query = supabase
       .from("products")
       .select("*")
-      .eq("collection_handle", collection);
+      const normalizedCollection =
+  collection.replace(/-/g, " ");
+
+.eq("product_type", normalizedCollection);
 
     if (minPrice) query = query.gte("price", minPrice);
     if (maxPrice) query = query.lte("price", maxPrice);

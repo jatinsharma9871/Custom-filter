@@ -97,31 +97,41 @@ async function syncProducts() {
         return found ? found.split("_")[1] : null;
       };
 
-      return {
-        id: p.node.id.split("/").pop(), // safer ID
-        title: p.node.title,
-        handle: p.node.handle,
-        vendor: p.node.vendor,
-        product_type: p.node.productType,
-        price: parseFloat(
-          p.node.variants.edges[0]?.node.price || 0
-        ),
-        image: p.node.images.edges[0]?.node.url || null,
+     return {
+  id: p.node.id.split("/").pop(),
+  title: p.node.title,
+  handle: p.node.handle,
+  vendor: p.node.vendor,
+  product_type: p.node.productType,
 
-        color: extractTag("Color"),
-        size: extractTag("Size"),
-        fabric: extractTag("Fabric"),
-        delivery_time: extractTag("Delivery"),
+  // ✅ correct column
+  collection_handle: p.node.productType
+    ?.toLowerCase()
+    .replace(/\s+/g, "-"),
 
-        collection: p.node.productType
-      };
-    });
+  price: parseFloat(
+    p.node.variants.edges[0]?.node.price || 0
+  ),
+  image: p.node.images.edges[0]?.node.url || null,
+
+  color: extractTag("Color"),
+  size: extractTag("Size"),
+  fabric: extractTag("Fabric"),
+  delivery_time: extractTag("Delivery")
+};    });
 
     /* ---------- UPSERT ---------- */
 
-    await supabase
-      .from("products")
-      .upsert(products, { onConflict: "id" });
+   const { data: insertedRows, error } = await supabase
+  .from("products")
+  .upsert(products, { onConflict: "id" });
+
+if (error) {
+  console.error("❌ SUPABASE INSERT ERROR:", error.message);
+  return;
+}
+
+console.log("✅ Inserted rows:", products.length);
 
     /* ---------- PAGINATION ---------- */
 
