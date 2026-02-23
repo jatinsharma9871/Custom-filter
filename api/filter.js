@@ -7,13 +7,12 @@ const supabase = createClient(
 
 export default async function handler(req, res) {
 
+  /* ================= HEADERS ================= */
+
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-res.setHeader("Pragma", "no-cache");
-res.setHeader("Expires", "0");
-
+  res.setHeader("Cache-Control", "no-store");
 
   if (req.method === "OPTIONS") {
     return res.status(200).json({ ok: true });
@@ -29,19 +28,26 @@ res.setHeader("Expires", "0");
     }
 
     /* =========================
-       FETCH ALL COLLECTION PRODUCTS
+       NORMALIZE PARAMS
     ========================== */
 
-  const { data: allProducts, error: metaError } = await supabase
-  .from("products")
-  .select("*")
-  .ilike("product_type", collection);
+    if (typeof vendor === "string" && vendor.includes(",")) {
+      vendor = vendor.split(",");
+    }
 
-      
+    /* =========================
+       FETCH COLLECTION PRODUCTS
+       ⭐ USING collection_handle
+    ========================== */
+
+    const { data: allProducts, error: metaError } = await supabase
+      .from("products")
+      .select("*")
+      .eq("collection_handle", collection);
 
     if (metaError) throw metaError;
 
-    if (!allProducts || allProducts.length === 0) {
+    if (!allProducts?.length) {
       return res.status(200).json({
         filters: {
           vendors: [],
@@ -55,9 +61,14 @@ res.setHeader("Expires", "0");
        BUILD FILTER META
     ========================== */
 
-    const vendors = [...new Set(allProducts.map(p => p.vendor).filter(Boolean))];
+    const vendors = [
+      ...new Set(allProducts.map(p => p.vendor).filter(Boolean))
+    ];
 
-    const prices = allProducts.map(p => parseFloat(p.price));
+    const prices = allProducts
+      .map(p => Number(p.price))
+      .filter(n => !isNaN(n));
+
     const min = Math.min(...prices);
     const max = Math.max(...prices);
 
@@ -65,28 +76,26 @@ res.setHeader("Expires", "0");
        APPLY FILTERS
     ========================== */
 
-   let query = supabase
-  .from("products")
-  .select("*")
- .ilike("product_type", collection.replace(/-/g, " "));
-
-
-    
+    let query = supabase
+      .from("products")
+      .select("*")
+      .eq("collection_handle", collection);
 
     if (minPrice) query = query.gte("price", minPrice);
     if (maxPrice) query = query.lte("price", maxPrice);
 
     if (vendor) {
-      if (Array.isArray(vendor)) {
-        query = query.in("vendor", vendor);
-      } else {
-        query = query.eq("vendor", vendor);
-      }
+      query = Array.isArray(vendor)
+        ? query.in("vendor", vendor)
+        : query.eq("vendor", vendor);
     }
 
     const { data: filtered, error } = await query;
-
     if (error) throw error;
+
+    /* =========================
+       RESPONSE
+    ========================== */
 
     return res.status(200).json({
       filters: {
