@@ -3,8 +3,6 @@ import { createClient } from "@supabase/supabase-js";
 
 /* ================= CONFIG ================= */
 
-
-
 const SHOP = "the-sverve.myshopify.com";
 const TOKEN = "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";
 
@@ -60,7 +58,7 @@ async function syncProducts() {
 
     const query = `
     {
-      products(first: 100 ${cursor ? `, after: "${cursor}"` : ""}) {
+      products(first:100 ${cursor ? `, after:"${cursor}"` : ""}) {
         pageInfo {
           hasNextPage
           endCursor
@@ -73,6 +71,13 @@ async function syncProducts() {
             vendor
             productType
             tags
+
+            collections(first:10){
+              edges{
+                node{ handle }
+              }
+            }
+
             images(first:1){ edges{ node{ url } } }
             variants(first:1){ edges{ node{ price } } }
           }
@@ -80,7 +85,7 @@ async function syncProducts() {
       }
     }`;
 
-    /* ---------- SAFE FETCH ---------- */
+    /* ---------- FETCH ---------- */
 
     const data = await shopifyFetch(query);
 
@@ -97,41 +102,43 @@ async function syncProducts() {
         return found ? found.split("_")[1] : null;
       };
 
-     return {
-  id: p.node.id.split("/").pop(),
-  title: p.node.title,
-  handle: p.node.handle,
-  vendor: p.node.vendor,
-  product_type: p.node.productType,
+      // ⭐ REAL SHOPIFY COLLECTIONS
+      const collections =
+        p.node.collections.edges.map(c => c.node.handle);
 
-  // ✅ correct column
-  collection_handle: p.node.productType
-    ?.toLowerCase()
-    .replace(/\s+/g, "-"),
+      return {
+        id: p.node.id.split("/").pop(),
+        title: p.node.title,
+        handle: p.node.handle,
+        vendor: p.node.vendor,
+        product_type: p.node.productType,
+        collection_handle: collections,
 
-  price: parseFloat(
-    p.node.variants.edges[0]?.node.price || 0
-  ),
-  image: p.node.images.edges[0]?.node.url || null,
+        price: parseFloat(
+          p.node.variants.edges[0]?.node.price || 0
+        ),
 
-  color: extractTag("Color"),
-  size: extractTag("Size"),
-  fabric: extractTag("Fabric"),
-  delivery_time: extractTag("Delivery")
-};    });
+        image: p.node.images.edges[0]?.node.url || null,
+
+        color: extractTag("Color"),
+        size: extractTag("Size"),
+        fabric: extractTag("Fabric"),
+        delivery_time: extractTag("Delivery")
+      };
+    });
 
     /* ---------- UPSERT ---------- */
 
-   const { data: insertedRows, error } = await supabase
-  .from("products")
-  .upsert(products, { onConflict: "id" });
+    const { error } = await supabase
+      .from("products")
+      .upsert(products, { onConflict: "id" });
 
-if (error) {
-  console.error("❌ SUPABASE INSERT ERROR:", error.message);
-  return;
-}
+    if (error) {
+      console.error("❌ SUPABASE ERROR:", error.message);
+      return;
+    }
 
-console.log("✅ Inserted rows:", products.length);
+    console.log("✅ Inserted:", products.length);
 
     /* ---------- PAGINATION ---------- */
 
@@ -140,7 +147,6 @@ console.log("✅ Inserted rows:", products.length);
 
     console.log("Batch synced");
 
-    /* ---------- RATE LIMIT PROTECTION ---------- */
     await sleep(1200);
   }
 
