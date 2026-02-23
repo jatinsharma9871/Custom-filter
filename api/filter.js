@@ -36,7 +36,7 @@ export default async function handler(req, res) {
 let query = supabase
   .from("products")
   .select("*")
-  .contains("collection_handle", [normalizedCollection]);
+  .contains("collection_handle", [collection])
 
     if (minPrice) query = query.gte("price", minPrice);
     if (maxPrice) query = query.lte("price", maxPrice);
