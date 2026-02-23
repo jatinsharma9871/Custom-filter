@@ -31,10 +31,12 @@ export default async function handler(req, res) {
 
     /* ---------- BASE QUERY ---------- */
 
-    let query = supabase
-      .from("products")
-      .select("*")
-      .eq("collection_handle", normalizedCollection);
+    const normalizedCollection = collection.toLowerCase();
+
+let query = supabase
+  .from("products")
+  .select("*")
+  .contains("collection_handle", [normalizedCollection]);
 
     if (minPrice) query = query.gte("price", minPrice);
     if (maxPrice) query = query.lte("price", maxPrice);
