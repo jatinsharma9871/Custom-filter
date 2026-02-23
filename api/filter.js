@@ -7,112 +7,72 @@ const supabase = createClient(
 
 export default async function handler(req, res) {
 
-  /* ================= HEADERS ================= */
-
+  /* ===== CORS ===== */
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.setHeader("Cache-Control", "no-store");
 
   if (req.method === "OPTIONS") {
-    return res.status(200).json({ ok: true });
+    return res.status(200).end();
   }
 
   try {
 
-    const { collection, minPrice, maxPrice } = req.query;
-    let { vendor } = req.query;
+    const { collection, minPrice, maxPrice, vendor } = req.query;
 
     if (!collection) {
       return res.status(400).json({ error: "Collection required" });
     }
 
-    /* =========================
-       NORMALIZE PARAMS
-    ========================== */
+    /* ---------- NORMALIZE ---------- */
 
-    if (typeof vendor === "string" && vendor.includes(",")) {
-      vendor = vendor.split(",");
-    }
+    const normalizedCollection =
+      collection.toLowerCase();
 
-    /* =========================
-       FETCH COLLECTION PRODUCTS
-       ⭐ USING collection_handle
-    ========================== */
-
-    const { data: allProducts, error: metaError } = await supabase
-      .from("products")
-      .select("*")
-      const normalizedCollection =
-  collection.replace(/-/g, " ");
-
-.eq("product_type", normalizedCollection);
-
-    if (metaError) throw metaError;
-
-    if (!allProducts?.length) {
-      return res.status(200).json({
-        filters: {
-          vendors: [],
-          priceRange: { min: 0, max: 0 }
-        },
-        products: []
-      });
-    }
-
-    /* =========================
-       BUILD FILTER META
-    ========================== */
-
-    const vendors = [
-      ...new Set(allProducts.map(p => p.vendor).filter(Boolean))
-    ];
-
-    const prices = allProducts
-      .map(p => Number(p.price))
-      .filter(n => !isNaN(n));
-
-    const min = Math.min(...prices);
-    const max = Math.max(...prices);
-
-    /* =========================
-       APPLY FILTERS
-    ========================== */
+    /* ---------- BASE QUERY ---------- */
 
     let query = supabase
       .from("products")
       .select("*")
-      const normalizedCollection =
-  collection.replace(/-/g, " ");
-
-.eq("product_type", normalizedCollection);
+      .eq("collection_handle", normalizedCollection);
 
     if (minPrice) query = query.gte("price", minPrice);
     if (maxPrice) query = query.lte("price", maxPrice);
 
     if (vendor) {
-      query = Array.isArray(vendor)
-        ? query.in("vendor", vendor)
-        : query.eq("vendor", vendor);
+      const vendors = Array.isArray(vendor)
+        ? vendor
+        : vendor.split(",");
+      query = query.in("vendor", vendors);
     }
 
-    const { data: filtered, error } = await query;
+    const { data: products, error } = await query;
+
     if (error) throw error;
 
-    /* =========================
-       RESPONSE
-    ========================== */
+    /* ---------- BUILD FILTER META ---------- */
+
+    const vendors = [
+      ...new Set(products.map(p => p.vendor).filter(Boolean))
+    ];
+
+    const prices = products.map(p => Number(p.price));
+
+    const min = prices.length ? Math.min(...prices) : 0;
+    const max = prices.length ? Math.max(...prices) : 0;
 
     return res.status(200).json({
       filters: {
         vendors,
         priceRange: { min, max }
       },
-      products: filtered
+      products
     });
 
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: err.message });
+    console.error("API ERROR:", err);
+    return res.status(500).json({
+      error: err.message
+    });
   }
 }
