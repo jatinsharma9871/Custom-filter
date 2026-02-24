@@ -25,25 +25,34 @@ export default async function handler(req, res) {
     }
 
     /* ---------- NORMALIZE ---------- */
-    const normalizedCollection = String(collection).toLowerCase();
+   const normalizedCollection = String(collection || "")
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9-_]/g, "");
 
     /* ---------- BASE QUERY ---------- */
-    let query = supabase
-      .from("products")
-      .select("*")
-   .contains("collection_handle", [normalizedCollection])
+    console.log("COLLECTION:", normalizedCollection);
+   /* ---------- BASE QUERY ---------- */
+let query = supabase
+  .from("products")
+  .select("*")
+  .filter(
+    "collection_handle",
+    "cs",
+    JSON.stringify([normalizedCollection])
+  );
 
-    /* ---------- PRICE FILTER ---------- */
-    if (minPrice) query = query.gte("price", minPrice);
-    if (maxPrice) query = query.lte("price", maxPrice);
+/* ---------- PRICE FILTER ---------- */
+if (minPrice) query = query.gte("price", Number(minPrice));
+if (maxPrice) query = query.lte("price", Number(maxPrice));
 
-    /* ---------- VENDOR FILTER ---------- */
-    if (vendor) {
-      const vendors = Array.isArray(vendor)
-        ? vendor
-        : vendor.split(",");
-      query = query.in("vendor", vendors);
-    }
+/* ---------- VENDOR FILTER ---------- */
+if (vendor) {
+  const vendors = Array.isArray(vendor)
+    ? vendor
+    : vendor.split(",");
+  query = query.in("vendor", vendors);
+}
 
     const { data: products, error } = await query;
 
