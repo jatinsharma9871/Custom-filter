@@ -58,7 +58,7 @@ async function syncProducts() {
 
   const query = `
 {
-  products(first:100 ${cursor ? `, after:"${cursor}"` : ""}) {
+  products(first:250 ${cursor ? `, after:"${cursor}"` : ""}) {
     pageInfo {
       hasNextPage
       endCursor
@@ -103,39 +103,60 @@ async function syncProducts() {
 
     const products = data.data.products.edges.map(p => {
 
-      const tags = p.node.tags || [];
+  const tags = p.node.tags || [];
 
-      const extractTag = (prefix) => {
-        const found = tags.find(t =>
-          t.toLowerCase().startsWith(prefix.toLowerCase() + "_")
-        );
-        return found ? found.split("_")[1] : null;
-      };
+  const extractTag = (prefix) => {
+    const found = tags.find(t =>
+      t.toLowerCase().startsWith(prefix.toLowerCase() + "_")
+    );
+    return found ? found.split("_")[1] : null;
+  };
 
-      // ⭐ REAL SHOPIFY COLLECTIONS
-      const collections =
-        p.node.collections.edges.map(c => c.node.handle);
+  /* -------- EXTRACT COLOR & SIZE FROM OPTIONS -------- */
 
-     return {
-  id: p.node.id.split("/").pop(),
-  title: p.node.title,
-  handle: p.node.handle,
-  vendor: p.node.vendor,
-  product_type: p.node.productType,
-  collection_handle: collections,
+  let color = null;
+  let size = null;
 
-  price: parseFloat(
-    p.node.variants.edges[0]?.node.price || 0
-  ),
+  p.node.options?.forEach(opt => {
 
-  image: p.node.images.edges[0]?.node.url || null,
+    const name = opt.name.toLowerCase();
 
-  color,
-  size,
-  fabric: extractTag("Fabric"),
-  delivery_time: extractTag("Delivery")
-};
+    if (name === "color" || name === "colour") {
+      color = opt.values?.join(",");
+    }
 
+    if (name === "size") {
+      size = opt.values?.join(",");
+    }
+
+  });
+
+  /* -------- COLLECTIONS -------- */
+
+  const collections =
+    p.node.collections.edges.map(c => c.node.handle);
+
+  return {
+    id: p.node.id.split("/").pop(),
+    title: p.node.title,
+    handle: p.node.handle,
+    vendor: p.node.vendor,
+    product_type: p.node.productType,
+    collection_handle: collections,
+
+    price: parseFloat(
+      p.node.variants.edges[0]?.node.price || 0
+    ),
+
+    image: p.node.images.edges[0]?.node.url || null,
+
+    color,
+    size,
+    fabric: extractTag("Fabric"),
+    delivery_time: extractTag("Delivery")
+  };
+
+});
     /* ---------- UPSERT ---------- */
 
     const { error } = await supabase
