@@ -18,7 +18,7 @@ export default async function handler(req, res) {
 
   try {
 
-    const { collection, minPrice, maxPrice, vendor } = req.query;
+    const { collection, minPrice, maxPrice, vendor, product_type } = req.query;
 
     if (!collection) {
       return res.status(400).json({ error: "Collection required" });
@@ -36,17 +36,18 @@ export default async function handler(req, res) {
 let query = supabase
   .from("products")
   .select("*")
-  .filter(
+  .eq("status", "active")
+  .eq("published", true)
+  .gt("inventory_quantity", 0);
+
+if (collection) {
+  query = query.filter(
     "collection_handle",
     "cs",
     JSON.stringify([normalizedCollection])
   );
+}
 
-/* ---------- PRICE FILTER ---------- */
-if (minPrice) query = query.gte("price", Number(minPrice));
-if (maxPrice) query = query.lte("price", Number(maxPrice));
-
-/* ---------- VENDOR FILTER ---------- */
 if (vendor) {
   const vendors = Array.isArray(vendor)
     ? vendor
@@ -54,27 +55,70 @@ if (vendor) {
   query = query.in("vendor", vendors);
 }
 
+if (req.query.product_type) {
+  const types = Array.isArray(req.query.product_type)
+    ? req.query.product_type
+    : req.query.product_type.split(",");
+  query = query.in("product_type", types);
+}
+
+if (minPrice) query = query.gte("price", Number(minPrice));
+if (maxPrice) query = query.lte("price", Number(maxPrice));
     const { data: products, error } = await query;
 
     if (error) throw error;
 
     /* ---------- BUILD FILTER META ---------- */
-    const vendors = [
-      ...new Set(products.map(p => p.vendor).filter(Boolean))
-    ];
+  const vendorCounts = {};
+const colorCounts = {};
+
+products.forEach(p => {
+
+  if (!p.color) return;
+
+  const colors = Array.isArray(p.color)
+    ? p.color
+    : [p.color];
+
+  colors.forEach(c => {
+    colorCounts[c] = (colorCounts[c] || 0) + 1;
+  });
+
+});
+
+const colors = Object.entries(colorCounts).map(([name, count]) => ({
+  name,
+  count
+}));
+
+products.forEach(p => {
+  if (!p.vendor) return;
+
+  vendorCounts[p.vendor] = (vendorCounts[p.vendor] || 0) + 1;
+});
+
+const vendors = Object.entries(vendorCounts).map(([name, count]) => ({
+  name,
+  count
+}));
+    const productTypes = [
+  ...new Set(products.map(p => p.product_type).filter(Boolean))
+];
 
     const prices = products.map(p => Number(p.price));
 
     const min = prices.length ? Math.min(...prices) : 0;
     const max = prices.length ? Math.max(...prices) : 0;
 
-    return res.status(200).json({
-      filters: {
-        vendors,
-        priceRange: { min, max }
-      },
-      products
-    });
+  return res.status(200).json({
+  filters: {
+    vendors,
+    productTypes,
+    colors,
+    priceRange: { min, max }
+  },
+  products
+});
 
   } catch (err) {
     console.error("API ERROR:", err);
