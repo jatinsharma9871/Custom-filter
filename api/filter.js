@@ -74,13 +74,19 @@ const colorCounts = {};
 
 products.forEach(p => {
 
-  if (!p.color) return;
+  let productColors = [];
 
-  const colors = Array.isArray(p.color)
-    ? p.color
-    : [p.color];
+  if (p.option1_name?.toLowerCase() === "color")
+    productColors.push(p.option1);
 
-  colors.forEach(c => {
+  if (p.option2_name?.toLowerCase() === "color")
+    productColors.push(p.option2);
+
+  if (p.option3_name?.toLowerCase() === "color")
+    productColors.push(p.option3);
+
+  productColors.forEach(c => {
+    if (!c) return;
     colorCounts[c] = (colorCounts[c] || 0) + 1;
   });
 
