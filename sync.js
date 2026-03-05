@@ -115,21 +115,27 @@ async function syncProducts() {
   /* -------- EXTRACT COLOR & SIZE FROM OPTIONS -------- */
 
   let color = null;
-  let size = null;
+let size = null;
 
-  p.node.options?.forEach(opt => {
+const variant = p.node.variants.edges[0]?.node;
 
-    const name = opt.name.toLowerCase();
+variant?.selectedOptions?.forEach(opt => {
 
-    if (name === "color" || name === "colour") {
-      color = opt.values?.join(",");
-    }
+  const name = opt.name.toLowerCase();
 
-    if (name === "size") {
-      size = opt.values?.join(",");
-    }
+  if (
+    name.includes("color") ||
+    name.includes("colour") ||
+    name.includes("shade")
+  ) {
+    color = opt.value;
+  }
 
-  });
+  if (name.includes("size")) {
+    size = opt.value;
+  }
+
+});
 
   /* -------- COLLECTIONS -------- */
 
