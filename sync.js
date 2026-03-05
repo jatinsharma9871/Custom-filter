@@ -56,34 +56,44 @@ async function syncProducts() {
 
   while (hasNextPage) {
 
-    const query = `
-    {
-      products(first:100 ${cursor ? `, after:"${cursor}"` : ""}) {
-        pageInfo {
-          hasNextPage
-          endCursor
+  const query = `
+{
+  products(first:100 ${cursor ? `, after:"${cursor}"` : ""}) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    edges {
+      node {
+        id
+        title
+        handle
+        vendor
+        productType
+        tags
+
+        options{
+          name
+          values
         }
-        edges {
-          node {
-            id
-            title
-            handle
-            vendor
-            productType
-            tags
 
-            collections(first:10){
-              edges{
-                node{ handle }
-              }
-            }
-
-            images(first:1){ edges{ node{ url } } }
-            variants(first:1){ edges{ node{ price } } }
+        collections(first:10){
+          edges{
+            node{ handle }
           }
         }
+
+        images(first:1){
+          edges{ node{ url } }
+        }
+
+        variants(first:1){
+          edges{ node{ price } }
+        }
       }
-    }`;
+    }
+  }
+}`;
 
     /* ---------- FETCH ---------- */
 
@@ -106,26 +116,25 @@ async function syncProducts() {
       const collections =
         p.node.collections.edges.map(c => c.node.handle);
 
-      return {
-        id: p.node.id.split("/").pop(),
-        title: p.node.title,
-        handle: p.node.handle,
-        vendor: p.node.vendor,
-        product_type: p.node.productType,
-        collection_handle: collections,
+     return {
+  id: p.node.id.split("/").pop(),
+  title: p.node.title,
+  handle: p.node.handle,
+  vendor: p.node.vendor,
+  product_type: p.node.productType,
+  collection_handle: collections,
 
-        price: parseFloat(
-          p.node.variants.edges[0]?.node.price || 0
-        ),
+  price: parseFloat(
+    p.node.variants.edges[0]?.node.price || 0
+  ),
 
-        image: p.node.images.edges[0]?.node.url || null,
+  image: p.node.images.edges[0]?.node.url || null,
 
-        color: extractTag("Color"),
-        size: extractTag("Size"),
-        fabric: extractTag("Fabric"),
-        delivery_time: extractTag("Delivery")
-      };
-    });
+  color,
+  size,
+  fabric: extractTag("Fabric"),
+  delivery_time: extractTag("Delivery")
+};
 
     /* ---------- UPSERT ---------- */
 
