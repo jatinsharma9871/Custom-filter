@@ -56,7 +56,7 @@ async function syncProducts() {
 
   while (hasNextPage) {
 
-  const query = `
+    const query = `
 {
   products(first:250 ${cursor ? `, after:"${cursor}"` : ""}) {
     pageInfo {
@@ -72,28 +72,39 @@ async function syncProducts() {
         productType
         tags
 
-        options{
-          name
-          values
-        }
-
-        collections(first:10){
-          edges{
-            node{ handle }
+        collections(first:10) {
+          edges {
+            node {
+              handle
+            }
           }
         }
 
-        images(first:1){
-          edges{ node{ url } }
+        images(first:1) {
+          edges {
+            node {
+              url
+            }
+          }
         }
 
-        variants(first:1){
-          edges{ node{ price } }
+        variants(first:1) {
+          edges {
+            node {
+              price
+              selectedOptions {
+                name
+                value
+              }
+            }
+          }
         }
+
       }
     }
   }
-}`;
+}
+`;
 
     /* ---------- FETCH ---------- */
 
@@ -103,66 +114,68 @@ async function syncProducts() {
 
     const products = data.data.products.edges.map(p => {
 
-  const tags = p.node.tags || [];
+      const tags = p.node.tags || [];
 
-  const extractTag = (prefix) => {
-    const found = tags.find(t =>
-      t.toLowerCase().startsWith(prefix.toLowerCase() + "_")
-    );
-    return found ? found.split("_")[1] : null;
-  };
+      const extractTag = (prefix) => {
+        const found = tags.find(t =>
+          t.toLowerCase().startsWith(prefix.toLowerCase() + "_")
+        );
+        return found ? found.split("_")[1] : null;
+      };
 
-  /* -------- EXTRACT COLOR & SIZE FROM OPTIONS -------- */
+      /* -------- COLOR + SIZE -------- */
 
-  let color = null;
-let size = null;
+      let color = null;
+      let size = null;
 
-const variant = p.node.variants.edges[0]?.node;
+      const variant = p.node.variants.edges[0]?.node;
 
-variant?.selectedOptions?.forEach(opt => {
+      variant?.selectedOptions?.forEach(opt => {
 
-  const name = opt.name.toLowerCase();
+        const name = opt.name.toLowerCase();
 
-  if (
-    name.includes("color") ||
-    name.includes("colour") ||
-    name.includes("shade")
-  ) {
-    color = opt.value;
-  }
+        if (
+          name.includes("color") ||
+          name.includes("colour") ||
+          name.includes("shade") ||
+          name.includes("style")
+        ) {
+          color = opt.value;
+        }
 
-  if (name.includes("size")) {
-    size = opt.value;
-  }
+        if (name.includes("size")) {
+          size = opt.value;
+        }
 
-});
+      });
 
-  /* -------- COLLECTIONS -------- */
+      /* -------- COLLECTIONS -------- */
 
-  const collections =
-    p.node.collections.edges.map(c => c.node.handle);
+      const collections =
+        p.node.collections.edges.map(c => c.node.handle);
 
-  return {
-    id: p.node.id.split("/").pop(),
-    title: p.node.title,
-    handle: p.node.handle,
-    vendor: p.node.vendor,
-    product_type: p.node.productType,
-    collection_handle: collections,
+      return {
+        id: p.node.id.split("/").pop(),
+        title: p.node.title,
+        handle: p.node.handle,
+        vendor: p.node.vendor,
+        product_type: p.node.productType,
+        collection_handle: collections,
 
-    price: parseFloat(
-      p.node.variants.edges[0]?.node.price || 0
-    ),
+        price: parseFloat(
+          variant?.price || 0
+        ),
 
-    image: p.node.images.edges[0]?.node.url || null,
+        image: p.node.images.edges[0]?.node.url || null,
 
-    color,
-    size,
-    fabric: extractTag("Fabric"),
-    delivery_time: extractTag("Delivery")
-  };
+        color,
+        size,
+        fabric: extractTag("Fabric"),
+        delivery_time: extractTag("Delivery")
+      };
 
-});
+    });
+
     /* ---------- UPSERT ---------- */
 
     const { error } = await supabase
