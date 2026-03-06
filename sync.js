@@ -59,40 +59,42 @@ async function syncProducts() {
     const query = `
 {
   products(first:250 ${cursor ? `, after:"${cursor}"` : ""}) {
+
     pageInfo {
       hasNextPage
       endCursor
     }
+
     edges {
       node {
+
         id
         title
         handle
         vendor
         productType
+        status
         tags
 
-        collections(first:10) {
-          edges {
-            node {
-              handle
-            }
+        collections(first:10){
+          edges{
+            node{ handle }
           }
         }
 
-        images(first:1) {
-          edges {
-            node {
-              url
-            }
+        images(first:1){
+          edges{
+            node{ url }
           }
         }
 
-        variants(first:1) {
-          edges {
-            node {
+        variants(first:1){
+          edges{
+            node{
               price
-              selectedOptions {
+              inventoryQuantity
+
+              selectedOptions{
                 name
                 value
               }
@@ -123,8 +125,6 @@ async function syncProducts() {
         return found ? found.split("_")[1] : null;
       };
 
-      /* -------- COLOR + SIZE -------- */
-
       let color = null;
       let size = null;
 
@@ -149,29 +149,36 @@ async function syncProducts() {
 
       });
 
-      /* -------- COLLECTIONS -------- */
-
       const collections =
         p.node.collections.edges.map(c => c.node.handle);
 
       return {
+
         id: p.node.id.split("/").pop(),
+
         title: p.node.title,
         handle: p.node.handle,
         vendor: p.node.vendor,
+
         product_type: p.node.productType,
         collection_handle: collections,
 
-        price: parseFloat(
-          variant?.price || 0
-        ),
+        price: parseFloat(variant?.price || 0),
 
         image: p.node.images.edges[0]?.node.url || null,
 
+        /* NEW FIELDS FOR FILTER API */
+
+        status: p.node.status,
+        published: p.node.status === "ACTIVE",
+        inventory_quantity: variant?.inventoryQuantity || 0,
+
         color,
         size,
+
         fabric: extractTag("Fabric"),
         delivery_time: extractTag("Delivery")
+
       };
 
     });
@@ -189,19 +196,14 @@ async function syncProducts() {
 
     console.log("✅ Inserted:", products.length);
 
-    /* ---------- PAGINATION ---------- */
-
     hasNextPage = data.data.products.pageInfo.hasNextPage;
     cursor = data.data.products.pageInfo.endCursor;
 
-    console.log("Batch synced");
-
     await sleep(1200);
+
   }
 
   console.log("All products synced ✅");
 }
-
-/* ================= RUN ================= */
 
 syncProducts();
