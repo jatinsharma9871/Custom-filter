@@ -24,112 +24,137 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Collection required" });
     }
 
-    /* ---------- NORMALIZE ---------- */
-   const normalizedCollection = String(collection || "")
-  .trim()
-  .toLowerCase()
-  .replace(/[^a-z0-9-_]/g, "");
+    /* ---------- NORMALIZE COLLECTION ---------- */
+
+    const normalizedCollection = String(collection || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]/g, "");
+
+    console.log("COLLECTION:", normalizedCollection);
 
     /* ---------- BASE QUERY ---------- */
-    console.log("COLLECTION:", normalizedCollection);
-   /* ---------- BASE QUERY ---------- */
-let query = supabase
-  .from("products")
-  .select("*")
-  .eq("status", "active")
-  .eq("published", true)
-  .gt("inventory_quantity", 0);
 
-if (collection) {
-  query = query.filter(
-    "collection_handle",
-    "cs",
-    JSON.stringify([normalizedCollection])
-  );
-}
+    let query = supabase
+      .from("products")
+      .select("*")
+      .eq("status", "ACTIVE")
+      .eq("published", true)
+      .gt("inventory_quantity", 0);
 
-if (vendor) {
-  const vendors = Array.isArray(vendor)
-    ? vendor
-    : vendor.split(",");
-  query = query.in("vendor", vendors);
-}
+    /* ---------- COLLECTION FILTER ---------- */
 
-if (req.query.product_type) {
-  const types = Array.isArray(req.query.product_type)
-    ? req.query.product_type
-    : req.query.product_type.split(",");
-  query = query.in("product_type", types);
-}
+    query = query.filter(
+      "collection_handle",
+      "cs",
+      JSON.stringify([normalizedCollection])
+    );
 
-if (minPrice) query = query.gte("price", Number(minPrice));
-if (maxPrice) query = query.lte("price", Number(maxPrice));
+    /* ---------- VENDOR FILTER ---------- */
+
+    if (vendor) {
+      const vendors = Array.isArray(vendor)
+        ? vendor
+        : vendor.split(",");
+      query = query.in("vendor", vendors);
+    }
+
+    /* ---------- PRODUCT TYPE FILTER ---------- */
+
+    if (product_type) {
+      const types = Array.isArray(product_type)
+        ? product_type
+        : product_type.split(",");
+      query = query.in("product_type", types);
+    }
+
+    /* ---------- PRICE FILTER ---------- */
+
+    if (minPrice) query = query.gte("price", Number(minPrice));
+    if (maxPrice) query = query.lte("price", Number(maxPrice));
+
     const { data: products, error } = await query;
 
     if (error) throw error;
 
     /* ---------- BUILD FILTER META ---------- */
-  const vendorCounts = {};
-const colorCounts = {};
 
-products.forEach(p => {
+    const vendorCounts = {};
+    const colorCounts = {};
+    const typeCounts = {};
 
-  let productColors = [];
+    products.forEach(p => {
 
-  if (p.option1_name?.toLowerCase() === "color")
-    productColors.push(p.option1);
+      /* ----- VENDOR COUNT ----- */
 
-  if (p.option2_name?.toLowerCase() === "color")
-    productColors.push(p.option2);
+      if (p.vendor) {
+        vendorCounts[p.vendor] = (vendorCounts[p.vendor] || 0) + 1;
+      }
 
-  if (p.option3_name?.toLowerCase() === "color")
-    productColors.push(p.option3);
+      /* ----- COLOR COUNT ----- */
 
-  productColors.forEach(c => {
-    if (!c) return;
-    colorCounts[c] = (colorCounts[c] || 0) + 1;
-  });
+      if (p.color) {
+        const colors = p.color.split(",");
 
-});
+        colors.forEach(c => {
+          const color = c.trim();
+          if (!color) return;
+          colorCounts[color] = (colorCounts[color] || 0) + 1;
+        });
+      }
 
-const colors = Object.entries(colorCounts).map(([name, count]) => ({
-  name,
-  count
-}));
+      /* ----- PRODUCT TYPE COUNT ----- */
 
-products.forEach(p => {
-  if (!p.vendor) return;
+      if (p.product_type) {
+        typeCounts[p.product_type] =
+          (typeCounts[p.product_type] || 0) + 1;
+      }
 
-  vendorCounts[p.vendor] = (vendorCounts[p.vendor] || 0) + 1;
-});
+    });
 
-const vendors = Object.entries(vendorCounts).map(([name, count]) => ({
-  name,
-  count
-}));
-    const productTypes = [
-  ...new Set(products.map(p => p.product_type).filter(Boolean))
-];
+    /* ---------- FORMAT FILTERS ---------- */
+
+    const vendors = Object.entries(vendorCounts).map(([name, count]) => ({
+      name,
+      count
+    }));
+
+    const colors = Object.entries(colorCounts).map(([name, count]) => ({
+      name,
+      count
+    }));
+
+    const productTypes = Object.entries(typeCounts).map(([name, count]) => ({
+      name,
+      count
+    }));
+
+    /* ---------- PRICE RANGE ---------- */
 
     const prices = products.map(p => Number(p.price));
 
     const min = prices.length ? Math.min(...prices) : 0;
     const max = prices.length ? Math.max(...prices) : 0;
 
-  return res.status(200).json({
-  filters: {
-    vendors,
-    productTypes,
-    colors,
-    priceRange: { min, max }
-  },
-  products
-});
+    /* ---------- RESPONSE ---------- */
+
+    return res.status(200).json({
+      filters: {
+        vendors,
+        productTypes,
+        colors,
+        priceRange: { min, max }
+      },
+      products
+    });
 
   } catch (err) {
+
     console.error("API ERROR:", err);
+
     return res.status(500).json({
       error: err.message
     });
+
   }
 }
