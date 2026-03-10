@@ -26,7 +26,7 @@ export default async function handler(req, res) {
 
     /* ---------- NORMALIZE COLLECTION ---------- */
 
-    const normalizedCollection = String(collection || "")
+    const normalizedCollection = String(collection)
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9-_]/g, "");
@@ -40,15 +40,12 @@ export default async function handler(req, res) {
       .select("*")
       .eq("status", "ACTIVE")
       .eq("published", true)
-      .gt("inventory_quantity", 0);
-
-    /* ---------- COLLECTION FILTER ---------- */
-
-    query = query.filter(
-      "collection_handle",
-      "cs",
-      JSON.stringify([normalizedCollection])
-    );
+      .gt("inventory_quantity", 0)
+      .filter(
+        "collection_handle",
+        "cs",
+        JSON.stringify([normalizedCollection])
+      );
 
     /* ---------- VENDOR FILTER ---------- */
 
@@ -78,48 +75,37 @@ export default async function handler(req, res) {
     if (error) throw error;
 
     /* ---------- BUILD FILTER META ---------- */
-/* ---------- BUILD FILTER META ---------- */
 
-const vendorCounts = {};
-const colorCounts = {};
-const typeCounts = {};
+    const vendorCounts = {};
+    const colorCounts = {};
+    const typeCounts = {};
 
-products.forEach(p => {
+    products.forEach(p => {
 
-  /* ----- VENDOR COUNT ----- */
+      /* ----- VENDOR COUNT ----- */
 
-  if (p.vendor) {
-    vendorCounts[p.vendor] =
-      (vendorCounts[p.vendor] || 0) + 1;
-  }
+      if (p.vendor) {
+        vendorCounts[p.vendor] =
+          (vendorCounts[p.vendor] || 0) + 1;
+      }
 
-  /* ----- COLOR COUNT ----- */
+      /* ----- COLOR COUNT ----- */
 
-  if (p.color) {
+      if (p.color) {
 
-    const colors = p.color.split(",");
+        const colors = p.color.split(",");
 
-    colors.forEach(c => {
+        colors.forEach(c => {
 
-      const color = c.trim();
+          const color = c.trim();
+          if (!color) return;
 
-      if (!color) return;
+          colorCounts[color] =
+            (colorCounts[color] || 0) + 1;
 
-      colorCounts[color] =
-        (colorCounts[color] || 0) + 1;
+        });
 
-    });
-
-  }
-
-  /* ----- PRODUCT TYPE COUNT ----- */
-
-  if (p.product_type) {
-    typeCounts[p.product_type] =
-      (typeCounts[p.product_type] || 0) + 1;
-  }
-
-});
+      }
 
       /* ----- PRODUCT TYPE COUNT ----- */
 
@@ -137,10 +123,12 @@ products.forEach(p => {
       count
     }));
 
-   const colors = Object.entries(colorCounts).map(([name, count]) => ({
-  name,
-  count
-}));
+    const colors = Object.entries(colorCounts)
+      .map(([name, count]) => ({
+        name,
+        count
+      }))
+      .sort((a,b)=>a.name.localeCompare(b.name));
 
     const productTypes = Object.entries(typeCounts).map(([name, count]) => ({
       name,
