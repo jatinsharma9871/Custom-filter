@@ -93,15 +93,32 @@ export default async function handler(req, res) {
 
       /* ----- COLOR COUNT ----- */
 
-      if (p.color) {
-        const colors = p.color.split(",");
 
-        colors.forEach(c => {
-          const color = c.trim();
-          if (!color) return;
-          colorCounts[color] = (colorCounts[color] || 0) + 1;
-        });
-      }
+products.forEach(p => {
+
+  if (!p.color) return;
+
+  const colors = p.color.split(",");
+
+  colors.forEach(c => {
+
+    const color = c.trim();
+
+    if (!color) return;
+
+    colorCounts[color] =
+      (colorCounts[color] || 0) + 1;
+
+  });
+
+});
+
+const colors = Object.entries(colorCounts)
+  .map(([name, count]) => ({
+    name,
+    count
+  }))
+  .sort((a,b)=>a.name.localeCompare(b.name));
 
       /* ----- PRODUCT TYPE COUNT ----- */
 
