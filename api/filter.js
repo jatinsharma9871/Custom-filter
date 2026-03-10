@@ -78,47 +78,48 @@ export default async function handler(req, res) {
     if (error) throw error;
 
     /* ---------- BUILD FILTER META ---------- */
+/* ---------- BUILD FILTER META ---------- */
 
-    const vendorCounts = {};
-    const colorCounts = {};
-    const typeCounts = {};
-
-    products.forEach(p => {
-
-      /* ----- VENDOR COUNT ----- */
-
-      if (p.vendor) {
-        vendorCounts[p.vendor] = (vendorCounts[p.vendor] || 0) + 1;
-      }
-
-      /* ----- COLOR COUNT ----- */
-
+const vendorCounts = {};
+const colorCounts = {};
+const typeCounts = {};
 
 products.forEach(p => {
 
-  if (!p.color) return;
+  /* ----- VENDOR COUNT ----- */
 
-  const colors = p.color.split(",");
+  if (p.vendor) {
+    vendorCounts[p.vendor] =
+      (vendorCounts[p.vendor] || 0) + 1;
+  }
 
-  colors.forEach(c => {
+  /* ----- COLOR COUNT ----- */
 
-    const color = c.trim();
+  if (p.color) {
 
-    if (!color) return;
+    const colors = p.color.split(",");
 
-    colorCounts[color] =
-      (colorCounts[color] || 0) + 1;
+    colors.forEach(c => {
 
-  });
+      const color = c.trim();
+
+      if (!color) return;
+
+      colorCounts[color] =
+        (colorCounts[color] || 0) + 1;
+
+    });
+
+  }
+
+  /* ----- PRODUCT TYPE COUNT ----- */
+
+  if (p.product_type) {
+    typeCounts[p.product_type] =
+      (typeCounts[p.product_type] || 0) + 1;
+  }
 
 });
-
-const colors = Object.entries(colorCounts)
-  .map(([name, count]) => ({
-    name,
-    count
-  }))
-  .sort((a,b)=>a.name.localeCompare(b.name));
 
       /* ----- PRODUCT TYPE COUNT ----- */
 
@@ -136,10 +137,10 @@ const colors = Object.entries(colorCounts)
       count
     }));
 
-    const colors = Object.entries(colorCounts).map(([name, count]) => ({
-      name,
-      count
-    }));
+   const colors = Object.entries(colorCounts).map(([name, count]) => ({
+  name,
+  count
+}));
 
     const productTypes = Object.entries(typeCounts).map(([name, count]) => ({
       name,
