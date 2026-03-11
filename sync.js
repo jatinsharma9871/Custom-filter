@@ -133,7 +133,20 @@ let size = null;
 let color = null;
 
 if (p.node.metafield?.value) {
-  color = p.node.metafield.value;
+
+  try {
+    const parsed = JSON.parse(p.node.metafield.value);
+
+    if (Array.isArray(parsed)) {
+      color = parsed.join(", ");
+    } else {
+      color = parsed;
+    }
+
+  } catch {
+    color = p.node.metafield.value;
+  }
+
 }
 
 variant?.selectedOptions?.forEach(opt => {
