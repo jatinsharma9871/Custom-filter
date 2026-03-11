@@ -91,26 +91,17 @@ export default async function handler(req, res) {
 
       /* ----- COLOR COUNT ----- */
 
-    if (p.color) {
+   products.forEach(p => {
 
-  let colors = [];
+  if (!p.color) return;
 
-  try {
-    /* HANDLE JSON ARRAY FROM SHOPIFY */
-    if (p.color.startsWith("[")) {
-      colors = JSON.parse(p.color);
-    } else {
-      colors = p.color.split(",");
-    }
-  } catch {
-    colors = [p.color];
-  }
+  const colors = Array.isArray(p.color)
+    ? p.color
+    : p.color.split(",");
 
   colors.forEach(c => {
 
-    const color = String(c)
-      .replace(/[\[\]"]/g, "")
-      .trim();
+    const color = c.trim();
 
     if (!color) return;
 
@@ -119,7 +110,7 @@ export default async function handler(req, res) {
 
   });
 
-}
+});
 
       /* ----- PRODUCT TYPE COUNT ----- */
 
