@@ -75,7 +75,9 @@ async function syncProducts() {
         productType
         status
         tags
-
+ metafield(namespace: "custom", key: "color") {
+    value
+  }
         collections(first:10){
           edges{
             node{ handle }
@@ -127,28 +129,30 @@ async function syncProducts() {
 
       let color = null;
       let size = null;
+let color = null;
 
-      const variant = p.node.variants.edges[0]?.node;
+/* PRODUCT METAFIELD COLOR */
+if (p.node.metafield?.value) {
+  color = p.node.metafield.value;
+}
 
-      variant?.selectedOptions?.forEach(opt => {
+/* fallback to variant option */
+else {
+  const variant = p.node.variants.edges[0]?.node;
 
-        const name = opt.name.toLowerCase();
+  variant?.selectedOptions?.forEach(opt => {
+    const name = opt.name.toLowerCase();
 
-        if (
-          name.includes("color") ||
-          name.includes("colour") ||
-          name.includes("shade") ||
-          name.includes("style")
-        ) {
-          color = opt.value;
-        }
-
+    if(name.includes("color") || name.includes("colour")){
+      color = opt.value;
+    }
+    
         if (name.includes("size")) {
           size = opt.value;
         }
 
       });
-
+}
       const collections =
         p.node.collections.edges.map(c => c.node.handle);
 
