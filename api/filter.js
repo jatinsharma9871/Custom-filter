@@ -91,17 +91,36 @@ export default async function handler(req, res) {
 
       /* ----- COLOR COUNT ----- */
 
-   products.forEach(p => {
+products.forEach(p => {
 
   if (!p.color) return;
 
-  const colors = Array.isArray(p.color)
-    ? p.color
-    : p.color.split(",");
+  let colors = [];
+
+  /* CASE 1: already array */
+  if (Array.isArray(p.color)) {
+    colors = p.color;
+  }
+
+  /* CASE 2: JSON string ["Red","White"] */
+  else if (typeof p.color === "string" && p.color.includes("[")) {
+    try {
+      colors = JSON.parse(p.color);
+    } catch {
+      colors = [p.color];
+    }
+  }
+
+  /* CASE 3: comma string */
+  else if (typeof p.color === "string") {
+    colors = p.color.split(",");
+  }
 
   colors.forEach(c => {
 
-    const color = c.trim();
+    const color = String(c)
+      .replace(/[\[\]"]/g, "")
+      .trim();
 
     if (!color) return;
 
