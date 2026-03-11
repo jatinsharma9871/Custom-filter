@@ -127,32 +127,28 @@ async function syncProducts() {
         return found ? found.split("_")[1] : null;
       };
 
-      let color = null;
-      let size = null;
+ const variant = p.node.variants.edges[0]?.node;
+
+let size = null;
 let color = null;
 
-/* PRODUCT METAFIELD COLOR */
 if (p.node.metafield?.value) {
   color = p.node.metafield.value;
 }
 
-/* fallback to variant option */
-else {
-  const variant = p.node.variants.edges[0]?.node;
+variant?.selectedOptions?.forEach(opt => {
 
-  variant?.selectedOptions?.forEach(opt => {
-    const name = opt.name.toLowerCase();
+  const name = opt.name.toLowerCase();
 
-    if(name.includes("color") || name.includes("colour")){
-      color = opt.value;
-    }
-    
-        if (name.includes("size")) {
-          size = opt.value;
-        }
+  if (!color && name.includes("color")) {
+    color = opt.value;
+  }
 
-      });
-}
+  if (name.includes("size")) {
+    size = opt.value;
+  }
+
+});
       const collections =
         p.node.collections.edges.map(c => c.node.handle);
 
