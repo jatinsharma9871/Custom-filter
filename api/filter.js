@@ -6,8 +6,7 @@ const supabase = createClient(
 );
 
 export default async function handler(req, res) {
-
-  /* ===== CORS ===== */
+  // ===== CORS =====
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -17,15 +16,13 @@ export default async function handler(req, res) {
   }
 
   try {
-
     const { collection, minPrice, maxPrice, vendor, product_type } = req.query;
 
     if (!collection) {
       return res.status(400).json({ error: "Collection required" });
     }
 
-    /* ---------- NORMALIZE COLLECTION ---------- */
-
+    // ---------- NORMALIZE COLLECTION ----------
     const normalizedCollection = String(collection)
       .trim()
       .toLowerCase()
@@ -33,8 +30,7 @@ export default async function handler(req, res) {
 
     console.log("COLLECTION:", normalizedCollection);
 
-    /* ---------- BASE QUERY ---------- */
-
+    // ---------- BASE QUERY ----------
     let query = supabase
       .from("products")
       .select("*")
@@ -47,17 +43,13 @@ export default async function handler(req, res) {
         JSON.stringify([normalizedCollection])
       );
 
-    /* ---------- VENDOR FILTER ---------- */
-
+    // ---------- VENDOR FILTER ----------
     if (vendor) {
-      const vendors = Array.isArray(vendor)
-        ? vendor
-        : vendor.split(",");
+      const vendors = Array.isArray(vendor) ? vendor : vendor.split(",");
       query = query.in("vendor", vendors);
     }
 
-    /* ---------- PRODUCT TYPE FILTER ---------- */
-
+    // ---------- PRODUCT TYPE FILTER ----------
     if (product_type) {
       const types = Array.isArray(product_type)
         ? product_type
@@ -65,151 +57,124 @@ export default async function handler(req, res) {
       query = query.in("product_type", types);
     }
 
-    /* ---------- PRICE FILTER ---------- */
-
+    // ---------- PRICE FILTER ----------
     if (minPrice) query = query.gte("price", Number(minPrice));
     if (maxPrice) query = query.lte("price", Number(maxPrice));
 
     const { data: products, error } = await query;
-
     if (error) throw error;
 
-    /* ---------- BUILD FILTER META ---------- */
-/* ---------- BUILD FILTER META ---------- */
+    // ---------- BUILD FILTER META ----------
+    const vendorCounts  = {};
+    const colorCounts   = {};
+    const typeCounts    = {};
+    const sizeSet       = new Set();
+    const fabricSet     = new Set();
+    const deliverySet   = new Set();
 
-const vendorCounts = {};
-const colorCounts = {};
-const typeCounts = {};
-const sizeSet = new Set();
-const fabricSet = new Set();
-const deliverySet = new Set();
-
-products.forEach(p => {
-
-  /* ===== VENDOR ===== */
-  if (p.vendor) {
-    vendorCounts[p.vendor] =
-      (vendorCounts[p.vendor] || 0) + 1;
-  }
-
-  /* ===== PRODUCT TYPE ===== */
-  if (p.product_type) {
-    typeCounts[p.product_type] =
-      (typeCounts[p.product_type] || 0) + 1;
-  }
-
-  /* ===== COLOR ===== */
-
-  if (p.color) {
-
-    let colors = [];
-
-    if (Array.isArray(p.color)) {
-      colors = p.color;
-    } else if (typeof p.color === "string" && p.color.includes("[")) {
-      try {
-        colors = JSON.parse(p.color);
-      } catch {
-        colors = [p.color];
+    products.forEach(p => {
+      // ===== VENDOR =====
+      if (p.vendor) {
+        vendorCounts[p.vendor] = (vendorCounts[p.vendor] || 0) + 1;
       }
-    } else {
-      colors = [p.color];
-    }
 
-    colors.forEach(c => {
+      // ===== PRODUCT TYPE =====
+      if (p.product_type) {
+        typeCounts[p.product_type] = (typeCounts[p.product_type] || 0) + 1;
+      }
 
-      const raw = c.replace(/[\[\]"]/g,"").trim();
-      if (!raw) return;
+      // ===== COLOR =====
+      if (p.color) {
+        let colors = [];
+        if (Array.isArray(p.color)) {
+          colors = p.color;
+        } else if (typeof p.color === "string" && p.color.includes("[")) {
+          try {
+            colors = JSON.parse(p.color);
+          } catch {
+            colors = [p.color];
+          }
+        } else {
+          colors = [p.color];
+        }
 
-      colorCounts[raw] =
-        (colorCounts[raw] || 0) + 1;
+        colors.forEach(c => {
+          const raw = c.replace(/[\[\]"]/g, "").trim();
+          if (!raw) return;
 
-      /* split multi color */
-      if (raw.includes("/")) {
-        raw.split("/").forEach(part => {
-          const color = part.trim();
-          colorCounts[color] =
-            (colorCounts[color] || 0) + 1;
+          colorCounts[raw] = (colorCounts[raw] || 0) + 1;
+
+          if (raw.includes("/")) {
+            raw.split("/").forEach(part => {
+              const color = part.trim();
+              if (!color) return;
+              colorCounts[color] = (colorCounts[color] || 0) + 1;
+            });
+          }
         });
       }
 
-    });
-  }
+      // ===== SIZE =====
+      if (p.size) {
+        let sizes = [];
+        if (Array.isArray(p.size)) {
+          sizes = p.size;
+        } else if (typeof p.size === "string" && p.size.includes("[")) {
+          try {
+            sizes = JSON.parse(p.size);
+          } catch {
+            sizes = [p.size];
+          }
+        } else {
+          sizes = [p.size];
+        }
 
-  /* ===== SIZE ===== */
-
-  if (p.size) {
-
-    let sizes = [];
-
-    if (Array.isArray(p.size)) {
-      sizes = p.size;
-    } else if (typeof p.size === "string" && p.size.includes("[")) {
-      try {
-        sizes = JSON.parse(p.size);
-      } catch {
-        sizes = [p.size];
-      }
-    } else {
-      sizes = [p.size];
-    }
-
-    sizes.forEach(s => {
-      if (s) sizeSet.add(s.trim());
-    });
-  }
-
-  /* ===== FABRIC ===== */
-
-  if (p.fabric) {
-    (Array.isArray(p.fabric) ? p.fabric : [p.fabric])
-      .forEach(f => f && fabricSet.add(f.trim()));
-  }
-
-  /* ===== DELIVERY ===== */
-
-  if (p.delivery_time) {
-    (Array.isArray(p.delivery_time) ? p.delivery_time : [p.delivery_time])
-      .forEach(d => d && deliverySet.add(d.trim()));
-  }
-
-});      /* ----- PRODUCT TYPE COUNT ----- */
-
-      if (p.product_type) {
-        typeCounts[p.product_type] =
-          (typeCounts[p.product_type] || 0) + 1;
+        sizes.forEach(s => {
+          if (s) sizeSet.add(String(s).trim());
+        });
       }
 
+      // ===== FABRIC =====
+      if (p.fabric) {
+        (Array.isArray(p.fabric) ? p.fabric : [p.fabric]).forEach(f => {
+          if (f) fabricSet.add(String(f).trim());
+        });
+      }
+
+      // ===== DELIVERY =====
+      if (p.delivery_time) {
+        (Array.isArray(p.delivery_time) ? p.delivery_time : [p.delivery_time])
+          .forEach(d => {
+            if (d) deliverySet.add(String(d).trim());
+          });
+      }
     });
 
-    /* ---------- FORMAT FILTERS ---------- */
-const vendors = Object.entries(vendorCounts).map(([name, count]) => ({
-  name,
-  count
-}));
+    // ---------- FORMAT FILTERS ----------
+    const vendors = Object.entries(vendorCounts).map(([name, count]) => ({
+      name,
+      count
+    }));
 
-const colors = Object.entries(colorCounts)
-  .map(([name, count]) => ({ name, count }))
-  .sort((a,b)=>a.name.localeCompare(b.name));
+    const colors = Object.entries(colorCounts)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name));
 
-const productTypes = Object.entries(typeCounts).map(([name, count]) => ({
-  name,
-  count
-}));
+    const productTypes = Object.entries(typeCounts).map(([name, count]) => ({
+      name,
+      count
+    }));
 
-/* ✅ NEW FILTERS */
-const sizes = [...sizeSet].sort();
-const fabrics = [...fabricSet].sort();
-const delivery_time = [...deliverySet].sort();
-    /* ---------- PRICE RANGE ---------- */
+    const sizes         = [...sizeSet].sort();
+    const fabrics       = [...fabricSet].sort();
+    const delivery_time = [...deliverySet].sort();
 
+    // ---------- PRICE RANGE ----------
     const prices = products.map(p => Number(p.price));
-
     const min = prices.length ? Math.min(...prices) : 0;
     const max = prices.length ? Math.max(...prices) : 0;
 
-    /* ---------- RESPONSE ---------- */
-
+    // ---------- RESPONSE ----------
     return res.status(200).json({
       filters: {
         vendors,
@@ -222,14 +187,8 @@ const delivery_time = [...deliverySet].sort();
       },
       products
     });
-
   } catch (err) {
-
     console.error("API ERROR:", err);
-
-    return res.status(500).json({
-      error: err.message
-    });
-
+    return res.status(500).json({ error: err.message || "Server error" });
   }
 }
