@@ -97,12 +97,10 @@ products.forEach(p => {
 
   let colors = [];
 
-  /* CASE 1: already array */
   if (Array.isArray(p.color)) {
     colors = p.color;
   }
 
-  /* CASE 2: JSON string ["Red","White"] */
   else if (typeof p.color === "string" && p.color.includes("[")) {
     try {
       colors = JSON.parse(p.color);
@@ -111,26 +109,37 @@ products.forEach(p => {
     }
   }
 
-  /* CASE 3: comma string */
-  else if (typeof p.color === "string") {
-    colors = p.color.split(",");
+  else {
+    colors = [p.color];
   }
 
   colors.forEach(c => {
 
-    const color = String(c)
-      .replace(/[\[\]"]/g, "")
-      .trim();
+    const raw = c.replace(/[\[\]"]/g,"").trim();
 
-    if (!color) return;
+    if (!raw) return;
 
-    colorCounts[color] =
-      (colorCounts[color] || 0) + 1;
+    /* count combined color */
+    colorCounts[raw] =
+      (colorCounts[raw] || 0) + 1;
+
+    /* split multi colors */
+    if(raw.includes("/")){
+
+      raw.split("/").forEach(part => {
+
+        const color = part.trim();
+
+        colorCounts[color] =
+          (colorCounts[color] || 0) + 1;
+
+      });
+
+    }
 
   });
 
 });
-
       /* ----- PRODUCT TYPE COUNT ----- */
 
       if (p.product_type) {

@@ -39,7 +39,7 @@ async function shopifyFetch(query, retries = 3) {
 
   } catch (err) {
     if (retries > 0) {
-      console.log("Retrying Shopify request...");
+      console.log("🔁 Retrying Shopify request...");
       await sleep(2000);
       return shopifyFetch(query, retries - 1);
     }
@@ -59,15 +59,12 @@ async function syncProducts() {
     const query = `
 {
   products(first:250 ${cursor ? `, after:"${cursor}"` : ""}) {
-
     pageInfo {
       hasNextPage
       endCursor
     }
-
     edges {
       node {
-
         id
         title
         handle
@@ -75,9 +72,11 @@ async function syncProducts() {
         productType
         status
         tags
- metafield(namespace: "custom", key: "color") {
-    value
-  }
+
+        metafield(namespace: "custom", key: "color") {
+          value
+        }
+
         collections(first:10){
           edges{
             node{ handle }
@@ -95,7 +94,6 @@ async function syncProducts() {
             node{
               price
               inventoryQuantity
-
               selectedOptions{
                 name
                 value
@@ -103,19 +101,17 @@ async function syncProducts() {
             }
           }
         }
-
       }
     }
   }
 }
 `;
 
-    /* ---------- FETCH ---------- */
+    console.log("📦 Fetching products...");
 
     const data = await shopifyFetch(query);
 
     /* ---------- TRANSFORM ---------- */
-
     const products = data.data.products.edges.map(p => {
 
       const tags = p.node.tags || [];
@@ -127,40 +123,50 @@ async function syncProducts() {
         return found ? found.split("_")[1] : null;
       };
 
- const variant = p.node.variants.edges[0]?.node;
+      const variant = p.node.variants.edges[0]?.node;
 
-let size = null;
-let color = null;
-if (p.node.metafield?.value) {
+      let size = [];
+      let color = [];
 
-  try {
-    const parsed = JSON.parse(p.node.metafield.value);
+      /* ===== COLOR (METAFIELD FIRST) ===== */
+      if (p.node.metafield?.value) {
+        try {
+          const parsed = JSON.parse(p.node.metafield.value);
 
-    if (Array.isArray(parsed)) {
-      color = parsed;
-    } else {
-      color = [parsed];
-    }
+          if (Array.isArray(parsed)) {
+            color = parsed.map(c => c.trim());
+          } else {
+            color = [parsed.trim()];
+          }
 
-  } catch {
-    color = [p.node.metafield.value];
-  }
+        } catch {
+          color = p.node.metafield.value
+            .split(",")
+            .map(c => c.trim());
+        }
+      }
 
-}
+      /* ===== VARIANT FALLBACK ===== */
+      variant?.selectedOptions?.forEach(opt => {
 
-variant?.selectedOptions?.forEach(opt => {
+        const name = opt.name.toLowerCase();
 
-  const name = opt.name.toLowerCase();
+        if (!color.length && name.includes("color")) {
+          color = opt.value
+            .split("/")
+            .map(c => c.trim());
+        }
 
-  if (!color && name.includes("color")) {
-    color = opt.value;
-  }
+        if (name.includes("size")) {
+          size.push(opt.value.trim());
+        }
 
-  if (name.includes("size")) {
-    size = opt.value;
-  }
+      });
 
-});
+      /* REMOVE DUPLICATES */
+      color = [...new Set(color)];
+      size = [...new Set(size)];
+
       const collections =
         p.node.collections.edges.map(c => c.node.handle);
 
@@ -179,24 +185,27 @@ variant?.selectedOptions?.forEach(opt => {
 
         image: p.node.images.edges[0]?.node.url || null,
 
-        /* NEW FIELDS FOR FILTER API */
-
         status: p.node.status,
         published: p.node.status === "ACTIVE",
         inventory_quantity: variant?.inventoryQuantity || 0,
 
+        /* FILTER FIELDS */
         color,
         size,
 
-        fabric: extractTag("Fabric"),
+        fabric: extractTag("Fabric")
+          ? extractTag("Fabric").split(",").map(f => f.trim())
+          : [],
+
         delivery_time: extractTag("Delivery")
+          ? extractTag("Delivery").split(",").map(d => d.trim())
+          : []
 
       };
 
     });
 
     /* ---------- UPSERT ---------- */
-
     const { error } = await supabase
       .from("products")
       .upsert(products, { onConflict: "id" });
@@ -212,10 +221,11 @@ variant?.selectedOptions?.forEach(opt => {
     cursor = data.data.products.pageInfo.endCursor;
 
     await sleep(1200);
-
   }
 
-  console.log("All products synced ✅");
+  console.log("🎉 All products synced successfully!");
 }
+
+/* ================= RUN ================= */
 
 syncProducts();
