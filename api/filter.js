@@ -75,72 +75,105 @@ export default async function handler(req, res) {
     if (error) throw error;
 
     /* ---------- BUILD FILTER META ---------- */
+/* ---------- BUILD FILTER META ---------- */
 
-    const vendorCounts = {};
-    const colorCounts = {};
-    const typeCounts = {};
-
-    products.forEach(p => {
-
-      /* ----- VENDOR COUNT ----- */
-
-      if (p.vendor) {
-        vendorCounts[p.vendor] =
-          (vendorCounts[p.vendor] || 0) + 1;
-      }
-
-      /* ----- COLOR COUNT ----- */
+const vendorCounts = {};
+const colorCounts = {};
+const typeCounts = {};
+const sizeSet = new Set();
+const fabricSet = new Set();
+const deliverySet = new Set();
 
 products.forEach(p => {
 
-  if (!p.color) return;
-
-  let colors = [];
-
-  if (Array.isArray(p.color)) {
-    colors = p.color;
+  /* ===== VENDOR ===== */
+  if (p.vendor) {
+    vendorCounts[p.vendor] =
+      (vendorCounts[p.vendor] || 0) + 1;
   }
 
-  else if (typeof p.color === "string" && p.color.includes("[")) {
-    try {
-      colors = JSON.parse(p.color);
-    } catch {
+  /* ===== PRODUCT TYPE ===== */
+  if (p.product_type) {
+    typeCounts[p.product_type] =
+      (typeCounts[p.product_type] || 0) + 1;
+  }
+
+  /* ===== COLOR ===== */
+
+  if (p.color) {
+
+    let colors = [];
+
+    if (Array.isArray(p.color)) {
+      colors = p.color;
+    } else if (typeof p.color === "string" && p.color.includes("[")) {
+      try {
+        colors = JSON.parse(p.color);
+      } catch {
+        colors = [p.color];
+      }
+    } else {
       colors = [p.color];
     }
+
+    colors.forEach(c => {
+
+      const raw = c.replace(/[\[\]"]/g,"").trim();
+      if (!raw) return;
+
+      colorCounts[raw] =
+        (colorCounts[raw] || 0) + 1;
+
+      /* split multi color */
+      if (raw.includes("/")) {
+        raw.split("/").forEach(part => {
+          const color = part.trim();
+          colorCounts[color] =
+            (colorCounts[color] || 0) + 1;
+        });
+      }
+
+    });
   }
 
-  else {
-    colors = [p.color];
-  }
+  /* ===== SIZE ===== */
 
-  colors.forEach(c => {
+  if (p.size) {
 
-    const raw = c.replace(/[\[\]"]/g,"").trim();
+    let sizes = [];
 
-    if (!raw) return;
-
-    /* count combined color */
-    colorCounts[raw] =
-      (colorCounts[raw] || 0) + 1;
-
-    /* split multi colors */
-    if(raw.includes("/")){
-
-      raw.split("/").forEach(part => {
-
-        const color = part.trim();
-
-        colorCounts[color] =
-          (colorCounts[color] || 0) + 1;
-
-      });
-
+    if (Array.isArray(p.size)) {
+      sizes = p.size;
+    } else if (typeof p.size === "string" && p.size.includes("[")) {
+      try {
+        sizes = JSON.parse(p.size);
+      } catch {
+        sizes = [p.size];
+      }
+    } else {
+      sizes = [p.size];
     }
 
-  });
+    sizes.forEach(s => {
+      if (s) sizeSet.add(s.trim());
+    });
+  }
 
-});
-      /* ----- PRODUCT TYPE COUNT ----- */
+  /* ===== FABRIC ===== */
+
+  if (p.fabric) {
+    (Array.isArray(p.fabric) ? p.fabric : [p.fabric])
+      .forEach(f => f && fabricSet.add(f.trim()));
+  }
+
+  /* ===== DELIVERY ===== */
+
+  if (p.delivery_time) {
+    (Array.isArray(p.delivery_time) ? p.delivery_time : [p.delivery_time])
+      .forEach(d => d && deliverySet.add(d.trim()));
+  }
+
+});      /* ----- PRODUCT TYPE COUNT ----- */
 
       if (p.product_type) {
         typeCounts[p.product_type] =
@@ -150,24 +183,24 @@ products.forEach(p => {
     });
 
     /* ---------- FORMAT FILTERS ---------- */
+const vendors = Object.entries(vendorCounts).map(([name, count]) => ({
+  name,
+  count
+}));
 
-    const vendors = Object.entries(vendorCounts).map(([name, count]) => ({
-      name,
-      count
-    }));
+const colors = Object.entries(colorCounts)
+  .map(([name, count]) => ({ name, count }))
+  .sort((a,b)=>a.name.localeCompare(b.name));
 
-    const colors = Object.entries(colorCounts)
-      .map(([name, count]) => ({
-        name,
-        count
-      }))
-      .sort((a,b)=>a.name.localeCompare(b.name));
+const productTypes = Object.entries(typeCounts).map(([name, count]) => ({
+  name,
+  count
+}));
 
-    const productTypes = Object.entries(typeCounts).map(([name, count]) => ({
-      name,
-      count
-    }));
-
+/* ✅ NEW FILTERS */
+const sizes = [...sizeSet].sort();
+const fabrics = [...fabricSet].sort();
+const delivery_time = [...deliverySet].sort();
     /* ---------- PRICE RANGE ---------- */
 
     const prices = products.map(p => Number(p.price));
@@ -182,6 +215,9 @@ products.forEach(p => {
         vendors,
         productTypes,
         colors,
+        sizes,
+        fabrics,
+        delivery_time,
         priceRange: { min, max }
       },
       products
