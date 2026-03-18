@@ -115,30 +115,21 @@ async function syncProducts() {
     const products = data.data.products.edges.map(p => {
 
       const tags = p.node.tags || [];
-
-      const extractTag = (prefix) => {
-        const found = tags.find(t =>
-          t.toLowerCase().startsWith(prefix.toLowerCase() + "_")
-        );
-        return found ? found.split("_")[1] : null;
-      };
-
       const variant = p.node.variants.edges[0]?.node;
 
       let size = [];
       let color = [];
+      let fabric = [];
+      let delivery_time = [];
 
-      /* ===== COLOR (METAFIELD FIRST) ===== */
+      /* ================= COLOR ================= */
+
       if (p.node.metafield?.value) {
         try {
           const parsed = JSON.parse(p.node.metafield.value);
-
-          if (Array.isArray(parsed)) {
-            color = parsed.map(c => c.trim());
-          } else {
-            color = [parsed.trim()];
-          }
-
+          color = Array.isArray(parsed)
+            ? parsed.map(c => c.trim())
+            : [parsed.trim()];
         } catch {
           color = p.node.metafield.value
             .split(",")
@@ -146,15 +137,13 @@ async function syncProducts() {
         }
       }
 
-      /* ===== VARIANT FALLBACK ===== */
+      /* VARIANT FALLBACK */
       variant?.selectedOptions?.forEach(opt => {
 
         const name = opt.name.toLowerCase();
 
         if (!color.length && name.includes("color")) {
-          color = opt.value
-            .split("/")
-            .map(c => c.trim());
+          color = opt.value.split("/").map(c => c.trim());
         }
 
         if (name.includes("size")) {
@@ -163,9 +152,52 @@ async function syncProducts() {
 
       });
 
-      /* REMOVE DUPLICATES */
+      /* ================= FABRIC (FIXED) ================= */
+
+      // 1. Fabric_Cotton
+      const fabricTag = tags.find(t =>
+        t.toLowerCase().startsWith("fabric_")
+      );
+
+      if (fabricTag) {
+        fabric = fabricTag
+          .split("_")[1]
+          .split(",")
+          .map(f => f.trim());
+      }
+
+      // 2. fallback: detect from normal tags
+      if (!fabric.length) {
+
+        const fabricKeywords = [
+          "cotton","silk","linen","wool","denim",
+          "polyester","rayon","chiffon","georgette","velvet"
+        ];
+
+        fabric = tags.filter(t =>
+          fabricKeywords.includes(t.toLowerCase())
+        );
+      }
+
+      /* ================= DELIVERY ================= */
+
+      const deliveryTag = tags.find(t =>
+        t.toLowerCase().startsWith("delivery_")
+      );
+
+      if (deliveryTag) {
+        delivery_time = deliveryTag
+          .split("_")[1]
+          .split(",")
+          .map(d => d.trim());
+      }
+
+      /* ================= CLEAN ================= */
+
       color = [...new Set(color)];
       size = [...new Set(size)];
+      fabric = [...new Set(fabric)];
+      delivery_time = [...new Set(delivery_time)];
 
       const collections =
         p.node.collections.edges.map(c => c.node.handle);
@@ -192,14 +224,8 @@ async function syncProducts() {
         /* FILTER FIELDS */
         color,
         size,
-
-        fabric: extractTag("Fabric")
-          ? extractTag("Fabric").split(",").map(f => f.trim())
-          : [],
-
-        delivery_time: extractTag("Delivery")
-          ? extractTag("Delivery").split(",").map(d => d.trim())
-          : []
+        fabric,
+        delivery_time
 
       };
 
