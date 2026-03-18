@@ -101,25 +101,25 @@ products.forEach(p => {
   }
 
   /* ===== COLOR ===== */
-  const colors = safeParse(p.color);
+  const parsedColors = safeParse(p.color);
 
-  colors.forEach(c => {
+parsedColors.forEach(c => {
 
-    const raw = String(c).replace(/[\[\]"]/g,"").trim();
-    if (!raw) return;
+  const raw = String(c).replace(/[\[\]"]/g,"").trim();
+  if (!raw) return;
 
-    colorCounts[raw] =
-      (colorCounts[raw] || 0) + 1;
+  colorCounts[raw] =
+    (colorCounts[raw] || 0) + 1;
 
-    if (raw.includes("/")) {
-      raw.split("/").forEach(part => {
-        const color = part.trim();
-        colorCounts[color] =
-          (colorCounts[color] || 0) + 1;
-      });
-    }
+  if (raw.includes("/")) {
+    raw.split("/").forEach(part => {
+      const color = part.trim();
+      colorCounts[color] =
+        (colorCounts[color] || 0) + 1;
+    });
+  }
 
-  });
+});
 
   /* ===== SIZE ===== */
   const sizes = safeParse(p.size);
