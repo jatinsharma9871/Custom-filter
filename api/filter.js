@@ -16,7 +16,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { collection, minPrice, maxPrice, vendor, product_type } = req.query;
+   const { collection, minPrice, maxPrice, vendor, product_type, color } = req.query;
 
     if (!collection) {
       return res.status(400).json({ error: "Collection required" });
@@ -76,7 +76,32 @@ function safeParse(value) {
     return [];
   }
 }
+/* ---------- COLOR FILTER ---------- */
+if (color) {
 
+  const selectedColors = Array.isArray(color)
+    ? color
+    : color.split(",");
+
+  const normalize = v => String(v).trim().toLowerCase();
+
+  const normalizedSelected = selectedColors.map(normalize);
+
+  // filter manually (Supabase JSON issue workaround)
+  const filtered = products.filter(p => {
+
+    const productColors = safeParse(p.color).map(normalize);
+
+    return normalizedSelected.some(c =>
+      productColors.includes(c)
+    );
+
+  });
+
+  // override products
+  products.length = 0;
+  products.push(...filtered);
+}
 /* ---------- BUILD FILTER META ---------- */
 
 const vendorCounts = {};
@@ -101,21 +126,31 @@ products.forEach(p => {
   }
 
   /* ===== COLOR ===== */
-  const parsedColors = safeParse(p.color);
+const parsedColors = safeParse(p.color);
 
 parsedColors.forEach(c => {
 
-  const raw = String(c).replace(/[\[\]"]/g,"").trim();
+  let raw = String(c).replace(/[\[\]"]/g,"").trim().toLowerCase();
   if (!raw) return;
 
-  colorCounts[raw] =
-    (colorCounts[raw] || 0) + 1;
+  // capitalize for UI
+  const formatted =
+    raw.charAt(0).toUpperCase() + raw.slice(1);
 
+  colorCounts[formatted] =
+    (colorCounts[formatted] || 0) + 1;
+
+  // handle multi-color
   if (raw.includes("/")) {
     raw.split("/").forEach(part => {
-      const color = part.trim();
-      colorCounts[color] =
-        (colorCounts[color] || 0) + 1;
+
+      const sub = part.trim().toLowerCase();
+      const subFormatted =
+        sub.charAt(0).toUpperCase() + sub.slice(1);
+
+      colorCounts[subFormatted] =
+        (colorCounts[subFormatted] || 0) + 1;
+
     });
   }
 

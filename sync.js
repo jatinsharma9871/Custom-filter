@@ -118,39 +118,77 @@ async function syncProducts() {
       const variant = p.node.variants.edges[0]?.node;
 
       let size = [];
-      let color = [];
+      // let color = [];
       let fabric = [];
       let delivery_time = [];
 
       /* ================= COLOR ================= */
+/* ================= COLOR (FIXED) ================= */
 
-      if (p.node.metafield?.value) {
-        try {
-          const parsed = JSON.parse(p.node.metafield.value);
-          color = Array.isArray(parsed)
-            ? parsed.map(c => c.trim())
-            : [parsed.trim()];
-        } catch {
-          color = p.node.metafield.value
-            .split(",")
-            .map(c => c.trim());
-        }
-      }
+let color = [];
 
-      /* VARIANT FALLBACK */
-      variant?.selectedOptions?.forEach(opt => {
+/* 1. METAFIELD (highest priority) */
+if (p.node.metafield?.value) {
+  try {
+    const parsed = JSON.parse(p.node.metafield.value);
 
-        const name = opt.name.toLowerCase();
+    color = Array.isArray(parsed)
+      ? parsed
+      : [parsed];
 
-        if (!color.length && name.includes("color")) {
-          color = opt.value.split("/").map(c => c.trim());
-        }
+  } catch {
+    color = p.node.metafield.value.split(",");
+  }
+}
 
-        if (name.includes("size")) {
-          size.push(opt.value.trim());
-        }
+/* 2. TAG (NEW - IMPORTANT) */
+if (!color.length) {
 
-      });
+  const colorTags = tags
+    .filter(t => t.toLowerCase().startsWith("color_"))
+    .map(t => t.split("_")[1]);
+
+  if (colorTags.length) {
+    color = colorTags.flatMap(c => c.split(","));
+  }
+}
+
+/* 3. VARIANT */
+if (!color.length) {
+  variant?.selectedOptions?.forEach(opt => {
+
+    if (opt.name.toLowerCase().includes("color")) {
+      color = opt.value.split("/");
+    }
+
+  });
+}
+
+/* 4. TITLE FALLBACK (optional but useful) */
+if (!color.length) {
+
+  const possibleColors = [
+    "red","blue","black","white","green","pink",
+    "yellow","purple","orange","brown","grey","beige"
+  ];
+
+  possibleColors.forEach(c => {
+    if (p.node.title.toLowerCase().includes(c)) {
+      color.push(c);
+    }
+  });
+}
+
+/* 5. NORMALIZE (VERY IMPORTANT) */
+color = color
+  .map(c => c.trim().toLowerCase())
+  .filter(Boolean);
+
+/* capitalize (for UI consistency) */
+color = color.map(c => c.charAt(0).toUpperCase() + c.slice(1));
+
+/* remove duplicates */
+color = [...new Set(color)];
 
       /* ================= FABRIC (FIXED) ================= */
 
