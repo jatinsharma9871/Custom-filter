@@ -26,8 +26,9 @@ export default async function handler(req, res) {
       .toLowerCase()
       .replace(/[^a-z0-9-_]/g, "");
 
-    // ===== BASE QUERY =====
-    let query = supabase
+    /* ================= FETCH ALL PRODUCTS ================= */
+
+    const { data: allProducts, error } = await supabase
       .from("products")
       .select("*")
       .eq("status", "ACTIVE")
@@ -38,28 +39,12 @@ export default async function handler(req, res) {
         JSON.stringify([normalizedCollection])
       );
 
-    // ===== VENDOR =====
-    if (vendor) {
-      const vendors = Array.isArray(vendor) ? vendor : vendor.split(",");
-      query = query.in("vendor", vendors);
-    }
-
-    // ===== PRODUCT TYPE =====
-    if (product_type) {
-      const types = Array.isArray(product_type)
-        ? product_type
-        : product_type.split(",");
-      query = query.in("product_type", types);
-    }
-
-    // ===== PRICE =====
-    if (minPrice) query = query.gte("price", Number(minPrice));
-    if (maxPrice) query = query.lte("price", Number(maxPrice));
-
-    const { data: products, error } = await query;
     if (error) throw error;
 
-    /* ---------- SAFE PARSER ---------- */
+    let products = [...allProducts];
+
+    /* ================= SAFE PARSER ================= */
+
     function safeParse(value) {
       try {
         if (!value) return [];
@@ -73,86 +58,77 @@ export default async function handler(req, res) {
       }
     }
 
-    /* ---------- 🔥 STOCK FILTER (FIXED) ---------- */
-    const inStockProducts = products.filter(p => {
+    /* ================= STOCK FILTER ================= */
+
+    products = products.filter(p => {
       if (p.inventory_quantity > 0) return true;
 
       const variants = safeParse(p.variants);
 
-      if (variants.length) {
-        return variants.some(v =>
-          v.inventory_quantity > 0 || v.available === true
-        );
-      }
-
-      return false;
+      return variants.some(v =>
+        v.inventory_quantity > 0 || v.available === true
+      );
     });
 
-    products.length = 0;
-    products.push(...inStockProducts);
+    /* ================= VENDOR ================= */
 
-    /* ---------- COLOR GROUPS ---------- */
+    if (vendor) {
+      const vendors = Array.isArray(vendor) ? vendor : vendor.split(",");
+      products = products.filter(p => vendors.includes(p.vendor));
+    }
+
+    /* ================= PRODUCT TYPE ================= */
+
+    if (product_type) {
+      const types = Array.isArray(product_type)
+        ? product_type
+        : product_type.split(",");
+      products = products.filter(p => types.includes(p.product_type));
+    }
+
+    /* ================= PRICE ================= */
+
+    if (minPrice) products = products.filter(p => p.price >= Number(minPrice));
+    if (maxPrice) products = products.filter(p => p.price <= Number(maxPrice));
+
+    /* ================= COLOR FILTER ================= */
+
     const COLOR_GROUPS = {
-      red: ["red","crimson","burgundy","wine","rust","sindoor","maroon","ruby"],
-      blue: ["blue","navy","sky","azure","sapphire","teal"],
-      green: ["green","emerald","olive","mint","lime","forest"],
-      pink: ["pink","blush","rose","fuchsia"],
-      purple: ["purple","violet","lilac","mauve","amethyst"],
-      brown: ["brown","tan","beige","cream","taupe"],
-      yellow: ["yellow","mustard","lemon","gold"],
-      black: ["black","charcoal","jet"],
-      white: ["white","ivory","off white","cream"],
-      grey: ["grey","gray","silver"]
+      red: ["red","crimson","burgundy","wine","rust"],
+      blue: ["blue","navy","sky","azure","sapphire"],
+      green: ["green","emerald","olive","mint"],
+      pink: ["pink","blush","rose"],
+      black: ["black","charcoal"],
+      white: ["white","ivory","cream"]
     };
 
-    function expandColor(color) {
-      const c = color.toLowerCase();
-      for (let group in COLOR_GROUPS) {
-        if (COLOR_GROUPS[group].includes(c)) {
-          return COLOR_GROUPS[group];
-        }
+    function expandColor(c) {
+      const key = c.toLowerCase();
+      for (let g in COLOR_GROUPS) {
+        if (COLOR_GROUPS[g].includes(key)) return COLOR_GROUPS[g];
       }
-      return [c];
+      return [key];
     }
 
-    /* ---------- COLOR FILTER ---------- */
     if (color) {
+      const selected = Array.isArray(color) ? color : color.split(",");
+      const expanded = selected.flatMap(expandColor);
 
-      const selectedColors = Array.isArray(color)
-        ? color
-        : color.split(",");
+      products = products.filter(p => {
+        const productColors = safeParse(p.color).map(c => c.toLowerCase());
 
-      const normalize = v => String(v).trim().toLowerCase();
+        const variantColors = safeParse(p.variants)
+          .map(v => (v.color || "").toLowerCase());
 
-      const expandedSelected = selectedColors.flatMap(c => expandColor(c));
-
-      function matchProducts(colorList) {
-        return products.filter(p => {
-
-          const productColors = safeParse(p.color).map(normalize);
-
-          const variantColors = safeParse(p.variants)
-            .map(v => normalize(v?.color || v?.option1 || ""));
-
-          return colorList.some(selected =>
-            productColors.some(pc => pc.includes(selected)) ||
-            variantColors.some(vc => vc.includes(selected))
-          );
-
-        });
-      }
-
-      let filtered = matchProducts(expandedSelected);
-
-      if (filtered.length === 0) {
-        filtered = matchProducts(selectedColors.map(normalize));
-      }
-
-      products.length = 0;
-      products.push(...filtered);
+        return expanded.some(c =>
+          productColors.some(pc => pc.includes(c)) ||
+          variantColors.some(vc => vc.includes(c))
+        );
+      });
     }
 
-    /* ---------- 🔥 FORMAT PRODUCTS ---------- */
+    /* ================= FORMAT PRODUCTS ================= */
+
     const formattedProducts = products.map(p => ({
       ...p,
       price: Number(p.price || 0),
@@ -164,7 +140,8 @@ export default async function handler(req, res) {
       )
     }));
 
-    /* ---------- BUILD FILTER META ---------- */
+    /* ================= BUILD FILTERS FROM ALL PRODUCTS ================= */
+
     const vendorCounts = {};
     const colorCounts = {};
     const typeCounts = {};
@@ -172,51 +149,63 @@ export default async function handler(req, res) {
     const fabricSet = new Set();
     const deliverySet = new Set();
 
-    formattedProducts.forEach(p => {
+    allProducts.forEach(p => {
 
-      if (p.vendor) {
-        vendorCounts[p.vendor] =
-          (vendorCounts[p.vendor] || 0) + 1;
-      }
-
-      if (p.product_type) {
-        typeCounts[p.product_type] =
-          (typeCounts[p.product_type] || 0) + 1;
-      }
+      if (p.vendor) vendorCounts[p.vendor] = (vendorCounts[p.vendor] || 0) + 1;
+      if (p.product_type) typeCounts[p.product_type] = (typeCounts[p.product_type] || 0) + 1;
 
       safeParse(p.color).forEach(c => {
-        let raw = String(c).toLowerCase().trim();
-        if (!raw) return;
-
-        const formatted =
-          raw.charAt(0).toUpperCase() + raw.slice(1);
-
-        colorCounts[formatted] =
-          (colorCounts[formatted] || 0) + 1;
+        const val = c.trim();
+        colorCounts[val] = (colorCounts[val] || 0) + 1;
       });
 
-      safeParse(p.size).forEach(s => s && sizeSet.add(s));
-      safeParse(p.fabric).forEach(f => f && fabricSet.add(f));
-      safeParse(p.delivery_time).forEach(d => d && deliverySet.add(d));
-
+      safeParse(p.size).forEach(s => sizeSet.add(s));
+      safeParse(p.fabric).forEach(f => fabricSet.add(f));
+      safeParse(p.delivery_time).forEach(d => deliverySet.add(d));
     });
 
-    const vendors = Object.entries(vendorCounts).map(([name, count]) => ({ name, count }));
-    const colors = Object.entries(colorCounts).map(([name, count]) => ({ name, count }));
-    const productTypes = Object.entries(typeCounts).map(([name, count]) => ({ name, count }));
+    /* ================= SORTING ================= */
+
+    const SIZE_ORDER = ["XXS","XS","S","M","L","XL","XXL","3XL","4XL"];
+
+    const vendors = Object.entries(vendorCounts)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const productTypes = Object.entries(typeCounts)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const colors = Object.entries(colorCounts)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const sizes = [...sizeSet].sort((a, b) =>
+      SIZE_ORDER.indexOf(a) - SIZE_ORDER.indexOf(b)
+    );
+
+    const fabrics = [...fabricSet].sort((a, b) =>
+      a.localeCompare(b)
+    );
+
+    const delivery_time = [...deliverySet].sort((a, b) =>
+      a.localeCompare(b)
+    );
 
     const prices = formattedProducts.map(p => p.price);
     const min = prices.length ? Math.min(...prices) : 0;
     const max = prices.length ? Math.max(...prices) : 0;
+
+    /* ================= RESPONSE ================= */
 
     return res.status(200).json({
       filters: {
         vendors,
         productTypes,
         colors,
-        sizes: [...sizeSet],
-        fabrics: [...fabricSet],
-        delivery_time: [...deliverySet],
+        sizes,
+        fabrics,
+        delivery_time,
         priceRange: { min, max }
       },
       products: formattedProducts
