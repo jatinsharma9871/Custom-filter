@@ -154,13 +154,33 @@ async function syncProducts() {
 
       /* ================= SIZE ================= */
 
-      variants.forEach(v => {
-        v.selectedOptions?.forEach(opt => {
-          if (opt.name.toLowerCase().includes("size")) {
-            size.push(opt.value);
-          }
-        });
-      });
+     /* ================= SIZE (FIXED) ================= */
+
+variants.forEach(v => {
+  v.selectedOptions?.forEach(opt => {
+
+    if (opt.name.toLowerCase().includes("size")) {
+
+      let value = opt.value;
+
+      // 🔥 split ranges (XS-S, M-L, XL-XXL)
+      if (value.includes("-")) {
+        value.split("-").forEach(s => size.push(s.trim()));
+      } else if (value.includes("/")) {
+        value.split("/").forEach(s => size.push(s.trim()));
+      } else {
+        size.push(value.trim());
+      }
+
+    }
+
+  });
+});
+
+/* CLEAN + NORMALIZE */
+size = [...new Set(
+  size.map(s => s.toUpperCase())
+)];
 
       /* ================= FABRIC ================= */
 
@@ -198,6 +218,13 @@ async function syncProducts() {
       fabric = [...new Set(fabric)];
       delivery_time = [...new Set(delivery_time)];
 
+      const SIZE_ORDER = [
+  "XXS","XS","S","M","L","XL","XXL","3XL","4XL","5XL"
+];
+
+size.sort((a, b) => {
+  return SIZE_ORDER.indexOf(a) - SIZE_ORDER.indexOf(b);
+});
       /* ================= VARIANTS ================= */
 
       const variantData = variants.map(v => ({
