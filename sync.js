@@ -89,7 +89,7 @@ async function syncProducts() {
           }
         }
 
-        variants(first:1){
+        variants(first:100){
           edges{
             node{
               price
@@ -111,88 +111,59 @@ async function syncProducts() {
 
     const data = await shopifyFetch(query);
 
-    /* ---------- TRANSFORM ---------- */
     const products = data.data.products.edges.map(p => {
 
       const tags = p.node.tags || [];
-      const variant = p.node.variants.edges[0]?.node;
+      const variants = p.node.variants.edges.map(v => v.node);
 
+      let color = [];
       let size = [];
-      // let color = [];
       let fabric = [];
       let delivery_time = [];
 
       /* ================= COLOR ================= */
-/* ================= COLOR (FIXED) ================= */
 
-let color = [];
+      if (p.node.metafield?.value) {
+        try {
+          const parsed = JSON.parse(p.node.metafield.value);
+          color = Array.isArray(parsed) ? parsed : [parsed];
+        } catch {
+          color = p.node.metafield.value.split(",");
+        }
+      }
 
-/* 1. METAFIELD (highest priority) */
-if (p.node.metafield?.value) {
-  try {
-    const parsed = JSON.parse(p.node.metafield.value);
+      if (!color.length) {
+        const colorTags = tags
+          .filter(t => t.toLowerCase().startsWith("color_"))
+          .map(t => t.split("_")[1]);
 
-    color = Array.isArray(parsed)
-      ? parsed
-      : [parsed];
+        if (colorTags.length) {
+          color = colorTags.flatMap(c => c.split(","));
+        }
+      }
 
-  } catch {
-    color = p.node.metafield.value.split(",");
-  }
-}
+      if (!color.length) {
+        variants.forEach(v => {
+          v.selectedOptions?.forEach(opt => {
+            if (opt.name.toLowerCase().includes("color")) {
+              color.push(...opt.value.split("/"));
+            }
+          });
+        });
+      }
 
-/* 2. TAG (NEW - IMPORTANT) */
-if (!color.length) {
+      /* ================= SIZE ================= */
 
-  const colorTags = tags
-    .filter(t => t.toLowerCase().startsWith("color_"))
-    .map(t => t.split("_")[1]);
+      variants.forEach(v => {
+        v.selectedOptions?.forEach(opt => {
+          if (opt.name.toLowerCase().includes("size")) {
+            size.push(opt.value);
+          }
+        });
+      });
 
-  if (colorTags.length) {
-    color = colorTags.flatMap(c => c.split(","));
-  }
-}
+      /* ================= FABRIC ================= */
 
-/* 3. VARIANT */
-if (!color.length) {
-  variant?.selectedOptions?.forEach(opt => {
-
-    if (opt.name.toLowerCase().includes("color")) {
-      color = opt.value.split("/");
-    }
-
-  });
-}
-
-/* 4. TITLE FALLBACK (optional but useful) */
-if (!color.length) {
-
-  const possibleColors = [
-    "red","blue","black","white","green","pink",
-    "yellow","purple","orange","brown","grey","beige"
-  ];
-
-  possibleColors.forEach(c => {
-    if (p.node.title.toLowerCase().includes(c)) {
-      color.push(c);
-    }
-  });
-}
-
-/* 5. NORMALIZE (VERY IMPORTANT) */
-color = color
-  .map(c => c.trim().toLowerCase())
-  .filter(Boolean);
-
-/* capitalize (for UI consistency) */
-color = color.map(c => c.charAt(0).toUpperCase() + c.slice(1));
-
-/* remove duplicates */
-color = [...new Set(color)];
-
-      /* ================= FABRIC (FIXED) ================= */
-
-      // 1. Fabric_Cotton
       const fabricTag = tags.find(t =>
         t.toLowerCase().startsWith("fabric_")
       );
@@ -202,19 +173,6 @@ color = [...new Set(color)];
           .split("_")[1]
           .split(",")
           .map(f => f.trim());
-      }
-
-      // 2. fallback: detect from normal tags
-      if (!fabric.length) {
-
-        const fabricKeywords = [
-          "cotton","silk","linen","wool","denim",
-          "polyester","rayon","chiffon","georgette","velvet"
-        ];
-
-        fabric = tags.filter(t =>
-          fabricKeywords.includes(t.toLowerCase())
-        );
       }
 
       /* ================= DELIVERY ================= */
@@ -232,16 +190,42 @@ color = [...new Set(color)];
 
       /* ================= CLEAN ================= */
 
-      color = [...new Set(color)];
+      color = [...new Set(
+        color.map(c => c.trim().toLowerCase())
+      )].map(c => c.charAt(0).toUpperCase() + c.slice(1));
+
       size = [...new Set(size)];
       fabric = [...new Set(fabric)];
       delivery_time = [...new Set(delivery_time)];
+
+      /* ================= VARIANTS ================= */
+
+      const variantData = variants.map(v => ({
+        color: v.selectedOptions?.find(o =>
+          o.name.toLowerCase().includes("color")
+        )?.value || "",
+        size: v.selectedOptions?.find(o =>
+          o.name.toLowerCase().includes("size")
+        )?.value || "",
+        inventory_quantity: v.inventoryQuantity || 0,
+        price: parseFloat(v.price || 0)
+      }));
+
+      /* ================= PRICE + STOCK ================= */
+
+      const price = variantData.length
+        ? Math.min(...variantData.map(v => v.price))
+        : 0;
+
+      const totalInventory = variantData.reduce(
+        (sum, v) => sum + (v.inventory_quantity || 0),
+        0
+      );
 
       const collections =
         p.node.collections.edges.map(c => c.node.handle);
 
       return {
-
         id: p.node.id.split("/").pop(),
 
         title: p.node.title,
@@ -251,25 +235,22 @@ color = [...new Set(color)];
         product_type: p.node.productType,
         collection_handle: collections,
 
-        price: parseFloat(variant?.price || 0),
+        price,
+        variants: variantData,
 
         image: p.node.images.edges[0]?.node.url || null,
 
         status: p.node.status,
         published: p.node.status === "ACTIVE",
-        inventory_quantity: variant?.inventoryQuantity || 0,
+        inventory_quantity: totalInventory,
 
-        /* FILTER FIELDS */
         color,
         size,
         fabric,
         delivery_time
-
       };
-
     });
 
-    /* ---------- UPSERT ---------- */
     const { error } = await supabase
       .from("products")
       .upsert(products, { onConflict: "id" });
