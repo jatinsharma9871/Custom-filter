@@ -77,6 +77,7 @@ function safeParse(value) {
   }
 }
 /* ---------- COLOR FILTER ---------- */
+/* ---------- COLOR FILTER (FIXED) ---------- */
 if (color) {
 
   const selectedColors = Array.isArray(color)
@@ -85,20 +86,38 @@ if (color) {
 
   const normalize = v => String(v).trim().toLowerCase();
 
-  const normalizedSelected = selectedColors.map(normalize);
+  const normalizedSelected =  new Set(selectedColors.map(normalize));
 
-  // filter manually (Supabase JSON issue workaround)
   const filtered = products.filter(p => {
 
+    // ✅ product-level colors
     const productColors = safeParse(p.color).map(normalize);
 
-    return normalizedSelected.some(c =>
-      productColors.includes(c)
-    );
+    // ✅ OPTIONAL: variant-level colors (if exists)
+    const variantColors = safeParse(p.variants)
+      .map(v => normalize(v?.color || v?.option1 || ""));
+
+    return normalizedSelected.some(selected => {
+
+      // 🔥 split multi-color (black/white)
+      const parts = selected.split("/");
+
+      return parts.some(part => {
+
+        return (
+          // ✅ partial match product
+          productColors.some(pc => pc.includes(part)) ||
+
+          // ✅ partial match variant
+          variantColors.some(vc => vc.includes(part))
+        );
+
+      });
+
+    });
 
   });
 
-  // override products
   products.length = 0;
   products.push(...filtered);
 }
