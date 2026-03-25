@@ -78,6 +78,29 @@ function safeParse(value) {
 }
 /* ---------- COLOR FILTER ---------- */
 /* ---------- COLOR FILTER (FIXED) ---------- */
+const COLOR_GROUPS = {
+  red: ["red","crimson","burgundy","wine","rust","sindoor","maroon","ruby"],
+  blue: ["blue","navy","sky","azure","sapphire","teal","night blue"],
+  green: ["green","emerald","olive","mint","lime","forest"],
+  pink: ["pink","blush","rose","fuchsia","gum pink"],
+  purple: ["purple","violet","lilac","mauve","amethyst"],
+  brown: ["brown","tan","beige","cream","taupe","cinnamon","chocolate"],
+  yellow: ["yellow","mustard","lemon","gold","golden"],
+  black: ["black","charcoal","jet"],
+  white: ["white","ivory","off white","cream"],
+  grey: ["grey","gray","silver","ash"]
+};
+function expandColor(color) {
+  const c = color.toLowerCase();
+
+  for (let group in COLOR_GROUPS) {
+    if (COLOR_GROUPS[group].includes(c)) {
+      return COLOR_GROUPS[group];
+    }
+  }
+
+  return [c]; // fallback
+}
 if (color) {
 
   const selectedColors = Array.isArray(color)
