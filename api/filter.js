@@ -101,6 +101,8 @@ function expandColor(color) {
 
   return [c]; // fallback
 }
+
+/* ---------- COLOR FILTER (SMART GROUPING) ---------- */
 if (color) {
 
   const selectedColors = Array.isArray(color)
@@ -109,41 +111,39 @@ if (color) {
 
   const normalize = v => String(v).trim().toLowerCase();
 
-  const normalizedSelected =  new Set(selectedColors.map(normalize));
+  // 🔥 expand groups
+  const expandedSelected = selectedColors.flatMap(c => expandColor(c));
 
-  const filtered = products.filter(p => {
+  function matchProducts(colorList) {
+    return products.filter(p => {
 
-    // ✅ product-level colors
-    const productColors = safeParse(p.color).map(normalize);
+      const productColors = safeParse(p.color).map(normalize);
 
-    // ✅ OPTIONAL: variant-level colors (if exists)
-    const variantColors = safeParse(p.variants)
-      .map(v => normalize(v?.color || v?.option1 || ""));
+      const variantColors = safeParse(p.variants)
+        .map(v => normalize(v?.color || v?.option1 || ""));
 
-    return normalizedSelected.some(selected => {
-
-      // 🔥 split multi-color (black/white)
-      const parts = selected.split("/");
-
-      return parts.some(part => {
-
-        return (
-          // ✅ partial match product
-          productColors.some(pc => pc.includes(part)) ||
-
-          // ✅ partial match variant
-          variantColors.some(vc => vc.includes(part))
-        );
-
-      });
+      return colorList.some(selected =>
+        productColors.some(pc => pc.includes(selected)) ||
+        variantColors.some(vc => vc.includes(selected))
+      );
 
     });
+  }
 
-  });
+  // 🔥 try grouped match first
+  let filtered = matchProducts(expandedSelected);
+
+  // 🔥 fallback (IMPORTANT)
+  if (filtered.length === 0) {
+    filtered = matchProducts(selectedColors.map(normalize));
+  }
 
   products.length = 0;
   products.push(...filtered);
 }
+
+
+
 /* ---------- BUILD FILTER META ---------- */
 
 const vendorCounts = {};
