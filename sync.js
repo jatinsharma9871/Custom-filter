@@ -245,21 +245,7 @@ async function syncProducts() {
         return SIZE_ORDER.indexOf(a) - SIZE_ORDER.indexOf(b);
       });
 
-      /* ================= FABRIC FILTER ================= */
-
-if (req.query.fabric) {
-  const fabrics = Array.isArray(req.query.fabric)
-    ? req.query.fabric
-    : req.query.fabric.split(",");
-
-  products = products.filter(p => {
-    const productFabric = safeParse(p.fabric).map(f => f.toLowerCase());
-
-    return fabrics.some(f =>
-      productFabric.includes(f.toLowerCase())
-    );
-  });
-}
+      
       /* ================= VARIANTS ================= */
 
       const variantData = variants.map(v => ({
@@ -285,7 +271,17 @@ if (req.query.fabric) {
       );
 
       const collections =
-        p.node.collections.edges.map(c => c.node.handle);
+  p.node.collections.edges
+    .map(c => c.node.handle)
+    .filter(c =>
+      ![
+        "all",
+        "orderlyemails-recommended-products",
+        "frontpage",
+        "homepage"
+      ].includes(c)
+    )
+    .slice(0, 1); // only keep 1 main collection
 
       return {
         id: p.node.id.split("/").pop(),
