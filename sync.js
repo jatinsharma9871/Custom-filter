@@ -245,6 +245,21 @@ async function syncProducts() {
         return SIZE_ORDER.indexOf(a) - SIZE_ORDER.indexOf(b);
       });
 
+      /* ================= FABRIC FILTER ================= */
+
+if (req.query.fabric) {
+  const fabrics = Array.isArray(req.query.fabric)
+    ? req.query.fabric
+    : req.query.fabric.split(",");
+
+  products = products.filter(p => {
+    const productFabric = safeParse(p.fabric).map(f => f.toLowerCase());
+
+    return fabrics.some(f =>
+      productFabric.includes(f.toLowerCase())
+    );
+  });
+}
       /* ================= VARIANTS ================= */
 
       const variantData = variants.map(v => ({

@@ -70,6 +70,21 @@ export default async function handler(req, res) {
       );
     });
 
+    /* ================= FABRIC FILTER ================= */
+
+if (req.query.fabric) {
+  const fabrics = Array.isArray(req.query.fabric)
+    ? req.query.fabric
+    : req.query.fabric.split(",");
+
+  products = products.filter(p => {
+    const productFabric = safeParse(p.fabric).map(f => f.toLowerCase());
+
+    return fabrics.some(f =>
+      productFabric.includes(f.toLowerCase())
+    );
+  });
+}
     /* ================= VENDOR ================= */
 
     if (vendor) {
