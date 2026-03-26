@@ -270,7 +270,7 @@ async function syncProducts() {
         0
       );
 
-      const collections =
+     const collections =
   p.node.collections.edges
     .map(c => c.node.handle)
     .filter(c =>

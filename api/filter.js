@@ -28,16 +28,30 @@ export default async function handler(req, res) {
 
     /* ================= FETCH ALL PRODUCTS ================= */
 
-    const { data: allProducts, error } = await supabase
+ const { data: allProducts, error } = await supabase
   .from("products")
   .select("*")
   .eq("status", "ACTIVE")
   .eq("published", true)
-  .contains("collection_handle", [normalizedCollection]);
+  .filter(
+    "collection_handle",
+    "cs",
+    `["${normalizedCollection}"]`
+  );
 
-    if (error) throw error;
+if (error) {
+  console.error("SUPABASE ERROR:", error);
+  return res.status(500).json({ error: error.message });
+}
 
-    let products = [...allProducts];
+
+
+if (error) {
+  console.error("SUPABASE ERROR:", error);
+  return res.status(500).json({ error: error.message });
+}
+console.log("Collection:", normalizedCollection);
+console.log("Sample data:", allProducts?.slice(0, 3));
 
     /* ================= SAFE PARSER ================= */
 
@@ -56,7 +70,7 @@ export default async function handler(req, res) {
 
     /* ================= STOCK FILTER ================= */
 
-    products = products.filter(p => {
+    let products = products.filter(p => {
       if (p.inventory_quantity > 0) return true;
 
       const variants = safeParse(p.variants);
@@ -74,7 +88,9 @@ if (req.query.fabric) {
     : req.query.fabric.split(",");
 
   products = products.filter(p => {
-    const productFabric = safeParse(p.fabric).map(f => f.toLowerCase());
+const productFabric = safeParse(p.fabric)
+  .map(f => f?.toLowerCase?.())
+  .filter(Boolean);
 
     return fabrics.some(f =>
       productFabric.includes(f.toLowerCase())
