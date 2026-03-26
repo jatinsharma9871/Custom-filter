@@ -73,7 +73,11 @@ async function syncProducts() {
         status
         tags
 
-        metafield(namespace: "custom", key: "color") {
+        colorMetafield: metafield(namespace: "custom", key: "color") {
+          value
+        }
+
+        fabricMetafield: metafield(namespace: "custom", key: "fabric") {
           value
         }
 
@@ -123,12 +127,12 @@ async function syncProducts() {
 
       /* ================= COLOR ================= */
 
-      if (p.node.metafield?.value) {
+      if (p.node.colorMetafield?.value) {
         try {
-          const parsed = JSON.parse(p.node.metafield.value);
+          const parsed = JSON.parse(p.node.colorMetafield.value);
           color = Array.isArray(parsed) ? parsed : [parsed];
         } catch {
-          color = p.node.metafield.value.split(",");
+          color = p.node.colorMetafield.value.split(",");
         }
       }
 
@@ -154,46 +158,61 @@ async function syncProducts() {
 
       /* ================= SIZE ================= */
 
-     /* ================= SIZE (FIXED) ================= */
+      variants.forEach(v => {
+        v.selectedOptions?.forEach(opt => {
+          if (opt.name.toLowerCase().includes("size")) {
 
-variants.forEach(v => {
-  v.selectedOptions?.forEach(opt => {
+            let value = opt.value;
 
-    if (opt.name.toLowerCase().includes("size")) {
+            if (value.includes("-")) {
+              value.split("-").forEach(s => size.push(s.trim()));
+            } else if (value.includes("/")) {
+              value.split("/").forEach(s => size.push(s.trim()));
+            } else {
+              size.push(value.trim());
+            }
+          }
+        });
+      });
 
-      let value = opt.value;
+      size = [...new Set(size.map(s => s.toUpperCase()))];
 
-      // 🔥 split ranges (XS-S, M-L, XL-XXL)
-      if (value.includes("-")) {
-        value.split("-").forEach(s => size.push(s.trim()));
-      } else if (value.includes("/")) {
-        value.split("/").forEach(s => size.push(s.trim()));
-      } else {
-        size.push(value.trim());
+      /* ================= FABRIC (FIXED) ================= */
+
+      // 1. FROM METAFIELD
+      if (p.node.fabricMetafield?.value) {
+        try {
+          const parsed = JSON.parse(p.node.fabricMetafield.value);
+          fabric = Array.isArray(parsed) ? parsed : [parsed];
+        } catch {
+          fabric = p.node.fabricMetafield.value.split(",");
+        }
       }
 
-    }
-
-  });
-});
-
-/* CLEAN + NORMALIZE */
-size = [...new Set(
-  size.map(s => s.toUpperCase())
-)];
-
-      /* ================= FABRIC ================= */
-
-      const fabricTag = tags.find(t =>
-        t.toLowerCase().startsWith("fabric_")
-      );
-
-      if (fabricTag) {
-        fabric = fabricTag
-          .split("_")[1]
-          .split(",")
-          .map(f => f.trim());
+      // 2. FROM VARIANTS
+      if (!fabric.length) {
+        variants.forEach(v => {
+          v.selectedOptions?.forEach(opt => {
+            if (opt.name.toLowerCase().includes("fabric")) {
+              fabric.push(...opt.value.split("/"));
+            }
+          });
+        });
       }
+
+      // 3. FROM TAGS
+      if (!fabric.length) {
+        const fabricTags = tags
+          .filter(t => t.toLowerCase().startsWith("fabric_"))
+          .flatMap(t => t.split("_")[1].split(","));
+
+        fabric.push(...fabricTags);
+      }
+
+      // CLEAN
+      fabric = [...new Set(
+        fabric.map(f => f.trim())
+      )];
 
       /* ================= DELIVERY ================= */
 
@@ -219,12 +238,13 @@ size = [...new Set(
       delivery_time = [...new Set(delivery_time)];
 
       const SIZE_ORDER = [
-  "XXS","XS","S","M","L","XL","XXL","3XL","4XL","5XL"
-];
+        "XXS","XS","S","M","L","XL","XXL","3XL","4XL","5XL"
+      ];
 
-size.sort((a, b) => {
-  return SIZE_ORDER.indexOf(a) - SIZE_ORDER.indexOf(b);
-});
+      size.sort((a, b) => {
+        return SIZE_ORDER.indexOf(a) - SIZE_ORDER.indexOf(b);
+      });
+
       /* ================= VARIANTS ================= */
 
       const variantData = variants.map(v => ({
@@ -254,23 +274,17 @@ size.sort((a, b) => {
 
       return {
         id: p.node.id.split("/").pop(),
-
         title: p.node.title,
         handle: p.node.handle,
         vendor: p.node.vendor,
-
         product_type: p.node.productType,
         collection_handle: collections,
-
         price,
         variants: variantData,
-
         image: p.node.images.edges[0]?.node.url || null,
-
         status: p.node.status,
         published: p.node.status === "ACTIVE",
         inventory_quantity: totalInventory,
-
         color,
         size,
         fabric,
