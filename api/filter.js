@@ -29,15 +29,11 @@ export default async function handler(req, res) {
     /* ================= FETCH ALL PRODUCTS ================= */
 
     const { data: allProducts, error } = await supabase
-      .from("products")
-      .select("*")
-      .eq("status", "ACTIVE")
-      .eq("published", true)
-      .filter(
-        "collection_handle",
-        "cs",
-        JSON.stringify([normalizedCollection])
-      );
+  .from("products")
+  .select("*")
+  .eq("status", "ACTIVE")
+  .eq("published", true)
+  .contains("collection_handle", [normalizedCollection]);
 
     if (error) throw error;
 
