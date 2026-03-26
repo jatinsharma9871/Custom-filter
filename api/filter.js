@@ -70,8 +70,10 @@ console.log("Sample data:", allProducts?.slice(0, 3));
 
     /* ================= STOCK FILTER ================= */
 
-    let products = products.filter(p => {
-      if (p.inventory_quantity > 0) return true;
+    let products = [...allProducts]; // initialize first
+
+products = products.filter(p => {
+        if (p.inventory_quantity > 0) return true;
 
       const variants = safeParse(p.variants);
 
