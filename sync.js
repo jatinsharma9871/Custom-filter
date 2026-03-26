@@ -81,7 +81,7 @@ async function syncProducts() {
           value
         }
 
-        collections(first:10){
+        collections(first:200){
           edges{
             node{ handle }
           }
