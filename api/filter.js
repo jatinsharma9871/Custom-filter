@@ -69,7 +69,15 @@ console.log("Sample data:", allProducts?.slice(0, 3));
     }
 
     /* ================= STOCK FILTER ================= */
+const availableProducts = allProducts.filter(p => {
+  if (p.inventory_quantity > 0) return true;
 
+  const variants = safeParse(p.variants);
+
+  return variants.some(v =>
+    v.inventory_quantity > 0 || v.available === true
+  );
+});
     let products = [...allProducts]; // initialize first
 
 products = products.filter(p => {
@@ -117,8 +125,33 @@ const productFabric = safeParse(p.fabric)
 
     /* ================= PRICE ================= */
 
-    if (minPrice) products = products.filter(p => p.price >= Number(minPrice));
-    if (maxPrice) products = products.filter(p => p.price <= Number(maxPrice));
+   const hasMin = minPrice !== undefined && minPrice !== "" && Number(minPrice) > 0;
+const hasMax = maxPrice !== undefined && maxPrice !== "" && Number(maxPrice) > 0;
+
+if (hasMin || hasMax) {
+  products = products.filter(p => {
+    const price = Number(p.price || 0);
+
+    if (hasMin && price < Number(minPrice)) return false;
+    if (hasMax && price > Number(maxPrice)) return false;
+
+    return true;
+  });
+}
+if (!allProducts || !allProducts.length) {
+  return res.status(200).json({
+    filters: {
+      vendors: [],
+      productTypes: [],
+      colors: [],
+      sizes: [],
+      fabrics: [],
+      delivery_time: [],
+      priceRange: { min: 0, max: 0 }
+    },
+    products: []
+  });
+}
 
     /* ================= COLOR FILTER ================= */
 
@@ -160,6 +193,17 @@ const productFabric = safeParse(p.fabric)
 
     const formattedProducts = products.map(p => ({
       ...p,
+
+const page = Number(req.query.page) || 1;
+const limit = Number(req.query.limit) || 12;
+
+const start = (page - 1) * limit;
+const end = start + limit;
+
+const total = formattedProducts.length;
+const totalPages = Math.ceil(total / limit);
+
+const paginatedProducts = formattedProducts.slice(start, end);
       price: Number(p.price || 0),
       compare_at_price: Number(
         p.compare_at_price ||
@@ -188,10 +232,36 @@ const productFabric = safeParse(p.fabric)
         colorCounts[val] = (colorCounts[val] || 0) + 1;
       });
 
-      safeParse(p.size).forEach(s => sizeSet.add(s));
+      availableProducts.forEach(p => {
+  const variants = safeParse(p.variants);
+
+  variants.forEach(v => {
+    if (v.inventory_quantity > 0) {
+      if (v.size) sizeSet.add(v.size);
+    }
+  });
+});
       safeParse(p.fabric).forEach(f => fabricSet.add(f));
       safeParse(p.delivery_time).forEach(d => deliverySet.add(d));
     });
+    const sizeAvailability = {};
+
+allProducts.forEach(p => {
+  const variants = safeParse(p.variants);
+
+  variants.forEach(v => {
+    const size = v.size;
+    if (!size) return;
+
+    if (!sizeAvailability[size]) {
+      sizeAvailability[size] = false;
+    }
+
+    if (v.inventory_quantity > 0) {
+      sizeAvailability[size] = true;
+    }
+  });
+});
 
     /* ================= SORTING ================= */
 
@@ -209,9 +279,29 @@ const productFabric = safeParse(p.fabric)
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
-    const sizes = [...sizeSet].sort((a, b) =>
-      SIZE_ORDER.indexOf(a) - SIZE_ORDER.indexOf(b)
-    );
+   const sizeAvailability = {};
+
+allProducts.forEach(p => {
+  const variants = safeParse(p.variants);
+
+  variants.forEach(v => {
+    const size = v.size;
+    if (!size) return;
+
+    if (!sizeAvailability[size]) {
+      sizeAvailability[size] = false;
+    }
+
+    if (v.inventory_quantity > 0) {
+      sizeAvailability[size] = true;
+    }
+  });
+});
+
+const sizes = Object.keys(sizeAvailability).map(s => ({
+  name: s,
+  available: sizeAvailability[s]
+}));
 
     const fabrics = [...fabricSet].sort((a, b) =>
       a.localeCompare(b)
@@ -237,7 +327,12 @@ const productFabric = safeParse(p.fabric)
         delivery_time,
         priceRange: { min, max }
       },
-      products: formattedProducts
+     products: paginatedProducts,
+pagination: {
+  total,
+  totalPages,
+  currentPage: page
+}
     });
 
   } catch (err) {

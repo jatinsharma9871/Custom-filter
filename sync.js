@@ -270,7 +270,7 @@ async function syncProducts() {
         0
       );
 
-     const collections =
+    const collections =
   p.node.collections.edges
     .map(c => c.node.handle)
     .filter(c =>
@@ -280,8 +280,7 @@ async function syncProducts() {
         "frontpage",
         "homepage"
       ].includes(c)
-    )
-    .slice(0, 1); // only keep 1 main collection
+    );
 
       return {
         id: p.node.id.split("/").pop(),
