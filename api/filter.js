@@ -6,6 +6,7 @@ const supabase = createClient(
 );
 
 export default async function handler(req, res) {
+  // ✅ CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -15,7 +16,16 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { collection, minPrice, maxPrice, vendor, product_type, color } = req.query;
+    const {
+      collection,
+      minPrice,
+      maxPrice,
+      vendor,
+      product_type,
+      color,
+      fabric,
+      page
+    } = req.query;
 
     if (!collection) {
       return res.status(400).json({ error: "Collection required" });
@@ -26,36 +36,30 @@ export default async function handler(req, res) {
       .toLowerCase()
       .replace(/[^a-z0-9-_]/g, "");
 
-    /* ================= FETCH ALL PRODUCTS ================= */
+    /* ================= FETCH PRODUCTS ================= */
 
- const { data: allProducts, error } = await supabase
-  .from("products")
-  .select("*")
-  .eq("status", "ACTIVE")
-  .eq("published", true)
-  .filter(
-    "collection_handle",
-    "cs",
-    `["${normalizedCollection}"]`
-  );
+    const { data: allProducts, error } = await supabase
+      .from("products")
+      .select("*")
+      .eq("status", "ACTIVE")
+      .eq("published", true)
+      .filter("collection_handle", "cs", `["${normalizedCollection}"]`);
 
-if (error) {
-  console.error("SUPABASE ERROR:", error);
-  return res.status(500).json({ error: error.message });
-}
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
 
-
-
-if (error) {
-  console.error("SUPABASE ERROR:", error);
-  return res.status(500).json({ error: error.message });
-}
-console.log("Collection:", normalizedCollection);
-console.log("Sample data:", allProducts?.slice(0, 3));
+    if (!allProducts || !allProducts.length) {
+      return res.status(200).json({
+        filters: {},
+        products: [],
+        pagination: { total: 0, totalPages: 0, currentPage: 1 }
+      });
+    }
 
     /* ================= SAFE PARSER ================= */
 
-    function safeParse(value) {
+    const safeParse = (value) => {
       try {
         if (!value) return [];
         if (Array.isArray(value)) return value;
@@ -66,56 +70,37 @@ console.log("Sample data:", allProducts?.slice(0, 3));
       } catch {
         return [];
       }
-    }
+    };
 
-    /* ================= STOCK FILTER ================= */
-const availableProducts = allProducts.filter(p => {
-  if (p.inventory_quantity > 0) return true;
+    /* ================= FILTER PRODUCTS ================= */
 
-  const variants = safeParse(p.variants);
-
-  return variants.some(v =>
-    v.inventory_quantity > 0 || v.available === true
-  );
-});
-    let products = [...allProducts]; // initialize first
-
-products = products.filter(p => {
-        if (p.inventory_quantity > 0) return true;
-
+    let products = allProducts.filter(p => {
+      if (p.inventory_quantity > 0) return true;
       const variants = safeParse(p.variants);
-
-      return variants.some(v =>
-        v.inventory_quantity > 0 || v.available === true
-      );
+      return variants.some(v => v.inventory_quantity > 0 || v.available === true);
     });
 
-    /* ================= FABRIC FILTER ================= */
+    // Fabric
+    if (fabric) {
+      const fabrics = Array.isArray(fabric) ? fabric : fabric.split(",");
+      products = products.filter(p => {
+        const productFabric = safeParse(p.fabric)
+          .map(f => f?.toLowerCase?.())
+          .filter(Boolean);
 
-if (req.query.fabric) {
-  const fabrics = Array.isArray(req.query.fabric)
-    ? req.query.fabric
-    : req.query.fabric.split(",");
+        return fabrics.some(f =>
+          productFabric.includes(f.toLowerCase())
+        );
+      });
+    }
 
-  products = products.filter(p => {
-const productFabric = safeParse(p.fabric)
-  .map(f => f?.toLowerCase?.())
-  .filter(Boolean);
-
-    return fabrics.some(f =>
-      productFabric.includes(f.toLowerCase())
-    );
-  });
-}
-    /* ================= VENDOR ================= */
-
+    // Vendor
     if (vendor) {
       const vendors = Array.isArray(vendor) ? vendor : vendor.split(",");
       products = products.filter(p => vendors.includes(p.vendor));
     }
 
-    /* ================= PRODUCT TYPE ================= */
-
+    // Product type
     if (product_type) {
       const types = Array.isArray(product_type)
         ? product_type
@@ -123,68 +108,30 @@ const productFabric = safeParse(p.fabric)
       products = products.filter(p => types.includes(p.product_type));
     }
 
-    /* ================= PRICE ================= */
+    // Price
+    const hasMin = minPrice && Number(minPrice) > 0;
+    const hasMax = maxPrice && Number(maxPrice) > 0;
 
-   const hasMin = minPrice !== undefined && minPrice !== "" && Number(minPrice) > 0;
-const hasMax = maxPrice !== undefined && maxPrice !== "" && Number(maxPrice) > 0;
-
-if (hasMin || hasMax) {
-  products = products.filter(p => {
-    const price = Number(p.price || 0);
-
-    if (hasMin && price < Number(minPrice)) return false;
-    if (hasMax && price > Number(maxPrice)) return false;
-
-    return true;
-  });
-}
-if (!allProducts || !allProducts.length) {
-  return res.status(200).json({
-    filters: {
-      vendors: [],
-      productTypes: [],
-      colors: [],
-      sizes: [],
-      fabrics: [],
-      delivery_time: [],
-      priceRange: { min: 0, max: 0 }
-    },
-    products: []
-  });
-}
-
-    /* ================= COLOR FILTER ================= */
-
-    const COLOR_GROUPS = {
-      red: ["red","crimson","burgundy","wine","rust"],
-      blue: ["blue","navy","sky","azure","sapphire"],
-      green: ["green","emerald","olive","mint"],
-      pink: ["pink","blush","rose"],
-      black: ["black","charcoal"],
-      white: ["white","ivory","cream"]
-    };
-
-    function expandColor(c) {
-      const key = c.toLowerCase();
-      for (let g in COLOR_GROUPS) {
-        if (COLOR_GROUPS[g].includes(key)) return COLOR_GROUPS[g];
-      }
-      return [key];
+    if (hasMin || hasMax) {
+      products = products.filter(p => {
+        const price = Number(p.price || 0);
+        if (hasMin && price < Number(minPrice)) return false;
+        if (hasMax && price > Number(maxPrice)) return false;
+        return true;
+      });
     }
 
+    // Color
     if (color) {
       const selected = Array.isArray(color) ? color : color.split(",");
-      const expanded = selected.flatMap(expandColor);
 
       products = products.filter(p => {
         const productColors = safeParse(p.color).map(c => c.toLowerCase());
+        const variantColors = safeParse(p.variants).map(v => (v.color || "").toLowerCase());
 
-        const variantColors = safeParse(p.variants)
-          .map(v => (v.color || "").toLowerCase());
-
-        return expanded.some(c =>
-          productColors.some(pc => pc.includes(c)) ||
-          variantColors.some(vc => vc.includes(c))
+        return selected.some(c =>
+          productColors.some(pc => pc.includes(c.toLowerCase())) ||
+          variantColors.some(vc => vc.includes(c.toLowerCase()))
         );
       });
     }
@@ -193,17 +140,6 @@ if (!allProducts || !allProducts.length) {
 
     const formattedProducts = products.map(p => ({
       ...p,
-
-const page = Number(req.query.page) || 1;
-const limit = Number(req.query.limit) || 12;
-
-const start = (page - 1) * limit;
-const end = start + limit;
-
-const total = formattedProducts.length;
-const totalPages = Math.ceil(total / limit);
-
-const paginatedProducts = formattedProducts.slice(start, end);
       price: Number(p.price || 0),
       compare_at_price: Number(
         p.compare_at_price ||
@@ -213,103 +149,65 @@ const paginatedProducts = formattedProducts.slice(start, end);
       )
     }));
 
-    /* ================= BUILD FILTERS FROM ALL PRODUCTS ================= */
+    /* ================= PAGINATION ================= */
+
+    const currentPage = Number(page) || 1;
+    const limit = 12;
+
+    const start = (currentPage - 1) * limit;
+    const end = start + limit;
+
+    const total = formattedProducts.length;
+    const totalPages = Math.ceil(total / limit);
+
+    const paginatedProducts = formattedProducts.slice(start, end);
+
+    /* ================= BUILD FILTERS ================= */
 
     const vendorCounts = {};
-    const colorCounts = {};
     const typeCounts = {};
-    const sizeSet = new Set();
+    const colorCounts = {};
+    const sizeAvailability = {};
     const fabricSet = new Set();
-    const deliverySet = new Set();
 
     allProducts.forEach(p => {
-
       if (p.vendor) vendorCounts[p.vendor] = (vendorCounts[p.vendor] || 0) + 1;
       if (p.product_type) typeCounts[p.product_type] = (typeCounts[p.product_type] || 0) + 1;
 
       safeParse(p.color).forEach(c => {
-        const val = c.trim();
-        colorCounts[val] = (colorCounts[val] || 0) + 1;
+        colorCounts[c] = (colorCounts[c] || 0) + 1;
       });
 
-      availableProducts.forEach(p => {
-  const variants = safeParse(p.variants);
-
-  variants.forEach(v => {
-    if (v.inventory_quantity > 0) {
-      if (v.size) sizeSet.add(v.size);
-    }
-  });
-});
       safeParse(p.fabric).forEach(f => fabricSet.add(f));
-      safeParse(p.delivery_time).forEach(d => deliverySet.add(d));
+
+      safeParse(p.variants).forEach(v => {
+        if (!v.size) return;
+        if (!sizeAvailability[v.size]) sizeAvailability[v.size] = false;
+        if (v.inventory_quantity > 0) sizeAvailability[v.size] = true;
+      });
     });
-    const sizeAvailability = {};
 
-allProducts.forEach(p => {
-  const variants = safeParse(p.variants);
+    const vendors = Object.keys(vendorCounts).map(name => ({
+      name,
+      count: vendorCounts[name]
+    }));
 
-  variants.forEach(v => {
-    const size = v.size;
-    if (!size) return;
+    const productTypes = Object.keys(typeCounts).map(name => ({
+      name,
+      count: typeCounts[name]
+    }));
 
-    if (!sizeAvailability[size]) {
-      sizeAvailability[size] = false;
-    }
+    const colors = Object.keys(colorCounts).map(name => ({
+      name,
+      count: colorCounts[name]
+    }));
 
-    if (v.inventory_quantity > 0) {
-      sizeAvailability[size] = true;
-    }
-  });
-});
+    const sizes = Object.keys(sizeAvailability).map(name => ({
+      name,
+      available: sizeAvailability[name]
+    }));
 
-    /* ================= SORTING ================= */
-
-    const SIZE_ORDER = ["XXS","XS","S","M","L","XL","XXL","3XL","4XL"];
-
-    const vendors = Object.entries(vendorCounts)
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-
-    const productTypes = Object.entries(typeCounts)
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-
-    const colors = Object.entries(colorCounts)
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-
-   const sizeAvailability = {};
-
-allProducts.forEach(p => {
-  const variants = safeParse(p.variants);
-
-  variants.forEach(v => {
-    const size = v.size;
-    if (!size) return;
-
-    if (!sizeAvailability[size]) {
-      sizeAvailability[size] = false;
-    }
-
-    if (v.inventory_quantity > 0) {
-      sizeAvailability[size] = true;
-    }
-  });
-});
-
-const sizes = Object.keys(sizeAvailability).map(s => ({
-  name: s,
-  available: sizeAvailability[s]
-}));
-
-    const fabrics = [...fabricSet].sort((a, b) =>
-      a.localeCompare(b)
-    );
-
-    const delivery_time = [...deliverySet].sort((a, b) =>
-      a.localeCompare(b)
-    );
+    const fabrics = [...fabricSet];
 
     const prices = formattedProducts.map(p => p.price);
     const min = prices.length ? Math.min(...prices) : 0;
@@ -324,19 +222,20 @@ const sizes = Object.keys(sizeAvailability).map(s => ({
         colors,
         sizes,
         fabrics,
-        delivery_time,
         priceRange: { min, max }
       },
-     products: paginatedProducts,
-pagination: {
-  total,
-  totalPages,
-  currentPage: page
-}
+      products: paginatedProducts,
+      pagination: {
+        total,
+        totalPages,
+        currentPage
+      }
     });
 
   } catch (err) {
     console.error("API ERROR:", err);
-    return res.status(500).json({ error: err.message || "Server error" });
+    return res.status(500).json({
+      error: err.message || "Server error"
+    });
   }
 }
