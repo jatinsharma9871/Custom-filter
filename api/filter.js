@@ -24,7 +24,8 @@ export default async function handler(req, res) {
       product_type,
       color,
       fabric,
-      page
+      page,
+      sort_by // ✅ NEW
     } = req.query;
 
     if (!collection) {
@@ -138,7 +139,7 @@ export default async function handler(req, res) {
 
     /* ================= FORMAT PRODUCTS ================= */
 
-    const formattedProducts = products.map(p => ({
+    let formattedProducts = products.map(p => ({
       ...p,
       price: Number(p.price || 0),
       compare_at_price: Number(
@@ -148,6 +149,48 @@ export default async function handler(req, res) {
         0
       )
     }));
+
+    /* ================= SORTING (NEW) ================= */
+
+    if (sort_by) {
+      switch (sort_by) {
+
+        case "price-ascending":
+          formattedProducts.sort((a, b) => a.price - b.price);
+          break;
+
+        case "price-descending":
+          formattedProducts.sort((a, b) => b.price - a.price);
+          break;
+
+        case "title-ascending":
+          formattedProducts.sort((a, b) =>
+            a.title?.localeCompare(b.title)
+          );
+          break;
+
+        case "title-descending":
+          formattedProducts.sort((a, b) =>
+            b.title?.localeCompare(a.title)
+          );
+          break;
+
+        case "created-descending":
+          formattedProducts.sort((a, b) =>
+            new Date(b.created_at) - new Date(a.created_at)
+          );
+          break;
+
+        case "created-ascending":
+          formattedProducts.sort((a, b) =>
+            new Date(a.created_at) - new Date(b.created_at)
+          );
+          break;
+
+        default:
+          break;
+      }
+    }
 
     /* ================= PAGINATION ================= */
 
