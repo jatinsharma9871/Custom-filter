@@ -152,52 +152,57 @@ export default async function handler(req, res) {
 
     /* ================= SORTING (NEW) ================= */
 
-   if (!sort_by || sort_by === "manual") {
-  // 👉 Default Shopify-like sorting (NEWEST FIRST)
+/* ================= SORTING ================= */
+
+if (!sort_by) {
+  // 👉 Default (Shopify usually uses manual or best-selling depending on theme)
   formattedProducts.sort((a, b) =>
     new Date(b.created_at) - new Date(a.created_at)
   );
 } else {
   switch (sort_by) {
-     
 
-        case "price-ascending":
-          formattedProducts.sort((a, b) => a.price - b.price);
-          break;
+    case "manual":
+      // 👉 IMPORTANT: requires position/index from Shopify
+      formattedProducts.sort((a, b) => (a.position || 0) - (b.position || 0));
+      break;
 
-        case "price-descending":
-          formattedProducts.sort((a, b) => b.price - a.price);
-          break;
+    case "price-ascending":
+      formattedProducts.sort((a, b) => a.price - b.price);
+      break;
 
-        case "title-ascending":
-          formattedProducts.sort((a, b) =>
-            a.title?.localeCompare(b.title)
-          );
-          break;
+    case "price-descending":
+      formattedProducts.sort((a, b) => b.price - a.price);
+      break;
 
-        case "title-descending":
-          formattedProducts.sort((a, b) =>
-            b.title?.localeCompare(a.title)
-          );
-          break;
+    case "title-ascending":
+      formattedProducts.sort((a, b) =>
+        a.title?.localeCompare(b.title)
+      );
+      break;
 
-        case "created-descending":
-          formattedProducts.sort((a, b) =>
-            new Date(b.created_at) - new Date(a.created_at)
-          );
-          break;
+    case "title-descending":
+      formattedProducts.sort((a, b) =>
+        b.title?.localeCompare(a.title)
+      );
+      break;
 
-        case "created-ascending":
-          formattedProducts.sort((a, b) =>
-            new Date(a.created_at) - new Date(b.created_at)
-          );
-          break;
+    case "created-descending":
+      formattedProducts.sort((a, b) =>
+        new Date(b.created_at) - new Date(a.created_at)
+      );
+      break;
 
-        default:
-          break;
-      }
-    }
+    case "created-ascending":
+      formattedProducts.sort((a, b) =>
+        new Date(a.created_at) - new Date(b.created_at)
+      );
+      break;
 
+    default:
+      break;
+  }
+}
     /* ================= PAGINATION ================= */
 
     const currentPage = Number(page) || 1;
