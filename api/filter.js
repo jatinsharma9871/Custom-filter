@@ -152,8 +152,14 @@ export default async function handler(req, res) {
 
     /* ================= SORTING (NEW) ================= */
 
-    if (sort_by) {
-      switch (sort_by) {
+   if (!sort_by || sort_by === "manual") {
+  // 👉 Default Shopify-like sorting (NEWEST FIRST)
+  formattedProducts.sort((a, b) =>
+    new Date(b.created_at) - new Date(a.created_at)
+  );
+} else {
+  switch (sort_by) {
+     
 
         case "price-ascending":
           formattedProducts.sort((a, b) => a.price - b.price);
