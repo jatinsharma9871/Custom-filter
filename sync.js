@@ -36,7 +36,6 @@ async function shopifyFetch(query, retries = 3) {
     }
 
     return json;
-
   } catch (err) {
     if (retries > 0) {
       console.log("🔁 Retrying Shopify request...");
@@ -45,6 +44,45 @@ async function shopifyFetch(query, retries = 3) {
     }
     throw err;
   }
+}
+
+/* ================= COLLECTS CACHE ================= */
+
+const collectsCache = {}; // { collectionId: { productId: position } }
+
+async function getCollects(collectionId) {
+  if (collectsCache[collectionId]) {
+    return collectsCache[collectionId];
+  }
+
+  let url = `https://${SHOP}/admin/api/2024-01/collects.json?collection_id=${collectionId}&limit=250`;
+
+  const map = {};
+
+  while (url) {
+    const res = await fetch(url, {
+      headers: {
+        "X-Shopify-Access-Token": TOKEN
+      }
+    });
+
+    const data = await res.json();
+
+    (data.collects || []).forEach(c => {
+      map[c.product_id] = c.position;
+    });
+
+    // pagination
+    const link = res.headers.get("link");
+    if (link && link.includes('rel="next"')) {
+      url = link.match(/<([^>]+)>; rel="next"/)?.[1];
+    } else {
+      url = null;
+    }
+  }
+
+  collectsCache[collectionId] = map;
+  return map;
 }
 
 /* ================= SYNC ================= */
@@ -72,18 +110,15 @@ async function syncProducts() {
         productType
         status
         tags
-
-        colorMetafield: metafield(namespace: "custom", key: "color") {
-          value
-        }
-
-        fabricMetafield: metafield(namespace: "custom", key: "fabric") {
-          value
-        }
+        createdAt
+        publishedAt
 
         collections(first:200){
           edges{
-            node{ handle }
+            node{
+              id
+              handle
+            }
           }
         }
 
@@ -112,154 +147,51 @@ async function syncProducts() {
 `;
 
     console.log("📦 Fetching products...");
-
     const data = await shopifyFetch(query);
 
-    const products = data.data.products.edges.map(p => {
+    const products = [];
 
-      const tags = p.node.tags || [];
-      const variants = p.node.variants.edges.map(v => v.node);
+    for (const p of data.data.products.edges) {
 
-      let color = [];
-      let size = [];
-      let fabric = [];
-      let delivery_time = [];
+      const node = p.node;
+      const productId = node.id.split("/").pop();
 
-      /* ================= COLOR ================= */
+      /* ================= COLLECTIONS ================= */
 
-      if (p.node.colorMetafield?.value) {
-        try {
-          const parsed = JSON.parse(p.node.colorMetafield.value);
-          color = Array.isArray(parsed) ? parsed : [parsed];
-        } catch {
-          color = p.node.colorMetafield.value.split(",");
+      const collections = node.collections.edges.map(c => ({
+        id: c.node.id.split("/").pop(),
+        handle: c.node.handle
+      }));
+
+      /* ================= POSITION ================= */
+
+      let positions = [];
+
+      for (const col of collections) {
+        const collectMap = await getCollects(col.id);
+        if (collectMap[productId] !== undefined) {
+          positions.push(collectMap[productId]);
         }
       }
 
-      if (!color.length) {
-        const colorTags = tags
-          .filter(t => t.toLowerCase().startsWith("color_"))
-          .map(t => t.split("_")[1]);
+      const position = positions.length ? Math.min(...positions) : 9999;
 
-        if (colorTags.length) {
-          color = colorTags.flatMap(c => c.split(","));
-        }
-      }
-
-      if (!color.length) {
-        variants.forEach(v => {
-          v.selectedOptions?.forEach(opt => {
-            if (opt.name.toLowerCase().includes("color")) {
-              color.push(...opt.value.split("/"));
-            }
-          });
-        });
-      }
-
-      /* ================= SIZE ================= */
-
-      variants.forEach(v => {
-        v.selectedOptions?.forEach(opt => {
-          if (opt.name.toLowerCase().includes("size")) {
-
-            let value = opt.value;
-
-            if (value.includes("-")) {
-              value.split("-").forEach(s => size.push(s.trim()));
-            } else if (value.includes("/")) {
-              value.split("/").forEach(s => size.push(s.trim()));
-            } else {
-              size.push(value.trim());
-            }
-          }
-        });
-      });
-
-      size = [...new Set(size.map(s => s.toUpperCase()))];
-
-      /* ================= FABRIC (FIXED) ================= */
-
-      // 1. FROM METAFIELD
-      if (p.node.fabricMetafield?.value) {
-        try {
-          const parsed = JSON.parse(p.node.fabricMetafield.value);
-          fabric = Array.isArray(parsed) ? parsed : [parsed];
-        } catch {
-          fabric = p.node.fabricMetafield.value.split(",");
-        }
-      }
-
-      // 2. FROM VARIANTS
-      if (!fabric.length) {
-        variants.forEach(v => {
-          v.selectedOptions?.forEach(opt => {
-            if (opt.name.toLowerCase().includes("fabric")) {
-              fabric.push(...opt.value.split("/"));
-            }
-          });
-        });
-      }
-
-      // 3. FROM TAGS
-      if (!fabric.length) {
-        const fabricTags = tags
-          .filter(t => t.toLowerCase().startsWith("fabric_"))
-          .flatMap(t => t.split("_")[1].split(","));
-
-        fabric.push(...fabricTags);
-      }
-
-      // CLEAN
-      fabric = [...new Set(
-        fabric.map(f => f.trim())
-      )];
-
-      /* ================= DELIVERY ================= */
-
-      const deliveryTag = tags.find(t =>
-        t.toLowerCase().startsWith("delivery_")
-      );
-
-      if (deliveryTag) {
-        delivery_time = deliveryTag
-          .split("_")[1]
-          .split(",")
-          .map(d => d.trim());
-      }
-
-      /* ================= CLEAN ================= */
-
-      color = [...new Set(
-        color.map(c => c.trim().toLowerCase())
-      )].map(c => c.charAt(0).toUpperCase() + c.slice(1));
-
-      size = [...new Set(size)];
-      fabric = [...new Set(fabric)];
-      delivery_time = [...new Set(delivery_time)];
-
-      const SIZE_ORDER = [
-        "XXS","XS","S","M","L","XL","XXL","3XL","4XL","5XL"
-      ];
-
-      size.sort((a, b) => {
-        return SIZE_ORDER.indexOf(a) - SIZE_ORDER.indexOf(b);
-      });
-
-      
       /* ================= VARIANTS ================= */
 
+      const variants = node.variants.edges.map(v => v.node);
+
       const variantData = variants.map(v => ({
+        price: parseFloat(v.price || 0),
+        inventory_quantity: v.inventoryQuantity || 0,
         color: v.selectedOptions?.find(o =>
           o.name.toLowerCase().includes("color")
         )?.value || "",
         size: v.selectedOptions?.find(o =>
           o.name.toLowerCase().includes("size")
-        )?.value || "",
-        inventory_quantity: v.inventoryQuantity || 0,
-        price: parseFloat(v.price || 0)
+        )?.value || ""
       }));
 
-      /* ================= PRICE + STOCK ================= */
+      /* ================= PRICE ================= */
 
       const price = variantData.length
         ? Math.min(...variantData.map(v => v.price))
@@ -270,37 +202,28 @@ async function syncProducts() {
         0
       );
 
-    const collections =
-  p.node.collections.edges
-    .map(c => c.node.handle)
-    .filter(c =>
-      ![
-        "all",
-        "orderlyemails-recommended-products",
-        "frontpage",
-        "homepage"
-      ].includes(c)
-    );
+      /* ================= BUILD PRODUCT ================= */
 
-      return {
-        id: p.node.id.split("/").pop(),
-        title: p.node.title,
-        handle: p.node.handle,
-        vendor: p.node.vendor,
-        product_type: p.node.productType,
-        collection_handle: collections,
+      products.push({
+        id: productId,
+        title: node.title,
+        handle: node.handle,
+        vendor: node.vendor,
+        product_type: node.productType,
+        collection_handle: collections.map(c => c.handle),
+        position,
         price,
         variants: variantData,
-        image: p.node.images.edges[0]?.node.url || null,
-        status: p.node.status,
-        published: p.node.status === "ACTIVE",
+        image: node.images.edges[0]?.node.url || null,
+        status: node.status,
+        published: node.status === "ACTIVE",
         inventory_quantity: totalInventory,
-        color,
-        size,
-        fabric,
-        delivery_time
-      };
-    });
+        created_at: node.createdAt,
+        published_at: node.publishedAt
+      });
+    }
+
+    /* ================= UPSERT ================= */
 
     const { error } = await supabase
       .from("products")
@@ -319,7 +242,7 @@ async function syncProducts() {
     await sleep(1200);
   }
 
-  console.log("🎉 All products synced successfully!");
+  console.log("🎉 Sync complete!");
 }
 
 /* ================= RUN ================= */
