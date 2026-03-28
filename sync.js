@@ -11,13 +11,13 @@ const supabase = createClient(
   "sb_publishable_7QPCLDGw0t6YloSbtA6Y0w_weJ86qO5"
 );
 
-/* ================= HELPERS ================= */
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/* ================= SHOPIFY FETCH ================= */
 
-async function shopifyFetch(query, retries = 3) {
+async function shopifyFetch(query) {
   try {
-    const response = await fetch(
+    const res = await fetch(
       `https://${SHOP}/admin/api/2024-01/graphql.json`,
       {
         method: "POST",
@@ -29,222 +29,215 @@ async function shopifyFetch(query, retries = 3) {
       }
     );
 
-    const json = await response.json();
+    const json = await res.json();
 
-    if (!response.ok || json.errors) {
-      throw new Error(JSON.stringify(json.errors));
+    if (!res.ok || json.errors) {
+      console.error("❌ Shopify Error:", json.errors);
+      throw new Error("Shopify API failed");
     }
 
     return json;
+
   } catch (err) {
-    if (retries > 0) {
-      console.log("🔁 Retrying Shopify request...");
-      await sleep(2000);
-      return shopifyFetch(query, retries - 1);
-    }
+    console.error("❌ Fetch failed:", err.message);
     throw err;
   }
 }
 
-/* ================= COLLECTS CACHE ================= */
-
-const collectsCache = {}; // { collectionId: { productId: position } }
-
-async function getCollects(collectionId) {
-  if (collectsCache[collectionId]) {
-    return collectsCache[collectionId];
-  }
-
-  let url = `https://${SHOP}/admin/api/2024-01/collects.json?collection_id=${collectionId}&limit=250`;
-
-  const map = {};
-
-  while (url) {
-    const res = await fetch(url, {
-      headers: {
-        "X-Shopify-Access-Token": TOKEN
-      }
-    });
-
-    const data = await res.json();
-
-    (data.collects || []).forEach(c => {
-      map[c.product_id] = c.position;
-    });
-
-    // pagination
-    const link = res.headers.get("link");
-    if (link && link.includes('rel="next"')) {
-      url = link.match(/<([^>]+)>; rel="next"/)?.[1];
-    } else {
-      url = null;
-    }
-  }
-
-  collectsCache[collectionId] = map;
-  return map;
-}
-
-/* ================= SYNC ================= */
+/* ================= MAIN SYNC ================= */
 
 async function syncProducts() {
 
+  console.log("🚀 STARTING SYNC...\n");
+
   let hasNextPage = true;
   let cursor = null;
+  let pageCount = 0;
+
+  const allProducts = [];
+  const allCollectionIds = new Set();
+
+  /* ===== STEP 1: FETCH PRODUCTS ===== */
 
   while (hasNextPage) {
 
+    pageCount++;
+
+    console.log(`📦 Fetching page ${pageCount}...`);
+
     const query = `
-{
-  products(first:250 ${cursor ? `, after:"${cursor}"` : ""}) {
-    pageInfo {
-      hasNextPage
-      endCursor
-    }
-    edges {
-      node {
-        id
-        title
-        handle
-        vendor
-        productType
-        status
-        tags
-        createdAt
-        publishedAt
+    {
+      products(first:250 ${cursor ? `, after:"${cursor}"` : ""}) {
+        pageInfo { hasNextPage endCursor }
+        edges {
+          node {
+            id
+            title
+            handle
+            vendor
+            productType
+            status
+            createdAt
+            publishedAt
 
-        collections(first:200){
-          edges{
-            node{
-              id
-              handle
+            collections(first:50){
+              edges{
+                node{ id handle }
+              }
             }
-          }
-        }
 
-        images(first:1){
-          edges{
-            node{ url }
-          }
-        }
+            images(first:1){
+              edges{ node{ url } }
+            }
 
-        variants(first:100){
-          edges{
-            node{
-              price
-              inventoryQuantity
-              selectedOptions{
-                name
-                value
+            variants(first:50){
+              edges{
+                node{
+                  price
+                  inventoryQuantity
+                }
               }
             }
           }
         }
       }
-    }
-  }
-}
-`;
+    }`;
 
-    console.log("📦 Fetching products...");
     const data = await shopifyFetch(query);
 
-    const products = [];
+    const edges = data?.data?.products?.edges || [];
 
-    for (const p of data.data.products.edges) {
+    console.log(`➡️ Products in page ${pageCount}:`, edges.length);
 
+    edges.forEach(p => {
       const node = p.node;
-      const productId = node.id.split("/").pop();
 
-      /* ================= COLLECTIONS ================= */
-
-      const collections = node.collections.edges.map(c => ({
-        id: c.node.id.split("/").pop(),
-        handle: c.node.handle
-      }));
-
-      /* ================= POSITION ================= */
-
-      let positions = [];
-
-      for (const col of collections) {
-        const collectMap = await getCollects(col.id);
-        if (collectMap[productId] !== undefined) {
-          positions.push(collectMap[productId]);
-        }
-      }
-
-      const position = positions.length ? Math.min(...positions) : 9999;
-
-      /* ================= VARIANTS ================= */
-
-      const variants = node.variants.edges.map(v => v.node);
-
-      const variantData = variants.map(v => ({
-        price: parseFloat(v.price || 0),
-        inventory_quantity: v.inventoryQuantity || 0,
-        color: v.selectedOptions?.find(o =>
-          o.name.toLowerCase().includes("color")
-        )?.value || "",
-        size: v.selectedOptions?.find(o =>
-          o.name.toLowerCase().includes("size")
-        )?.value || ""
-      }));
-
-      /* ================= PRICE ================= */
-
-      const price = variantData.length
-        ? Math.min(...variantData.map(v => v.price))
-        : 0;
-
-      const totalInventory = variantData.reduce(
-        (sum, v) => sum + (v.inventory_quantity || 0),
-        0
-      );
-
-      /* ================= BUILD PRODUCT ================= */
-
-      products.push({
-        id: productId,
-        title: node.title,
-        handle: node.handle,
-        vendor: node.vendor,
-        product_type: node.productType,
-        collection_handle: collections.map(c => c.handle),
-        position,
-        price,
-        variants: variantData,
-        image: node.images.edges[0]?.node.url || null,
-        status: node.status,
-        published: node.status === "ACTIVE",
-        inventory_quantity: totalInventory,
-        created_at: node.createdAt,
-        published_at: node.publishedAt
+      const collections = node.collections.edges.map(c => {
+        const id = c.node.id.split("/").pop();
+        allCollectionIds.add(id);
+        return {
+          id,
+          handle: c.node.handle
+        };
       });
-    }
 
-    /* ================= UPSERT ================= */
+      allProducts.push({ node, collections });
+    });
 
-    const { error } = await supabase
-      .from("products")
-      .upsert(products, { onConflict: "id" });
-
-    if (error) {
-      console.error("❌ SUPABASE ERROR:", error.message);
-      return;
-    }
-
-    console.log("✅ Inserted:", products.length);
+    console.log(`📊 Total products so far: ${allProducts.length}\n`);
 
     hasNextPage = data.data.products.pageInfo.hasNextPage;
     cursor = data.data.products.pageInfo.endCursor;
 
-    await sleep(1200);
+    await sleep(600);
   }
 
-  console.log("🎉 Sync complete!");
+  console.log("✅ TOTAL PRODUCTS FETCHED:", allProducts.length);
+
+  /* ===== STEP 2: FETCH COLLECTS ===== */
+
+  console.log("\n📦 Fetching collection positions...");
+
+  const collectsMap = {};
+
+  for (const id of allCollectionIds) {
+
+    console.log(`➡️ Fetching collects for collection ${id}`);
+
+    let url = `https://${SHOP}/admin/api/2024-01/collects.json?collection_id=${id}&limit=250`;
+    collectsMap[id] = {};
+
+    while (url) {
+      const res = await fetch(url, {
+        headers: { "X-Shopify-Access-Token": TOKEN }
+      });
+
+      const data = await res.json();
+
+      (data.collects || []).forEach(c => {
+        collectsMap[id][c.product_id] = c.position;
+      });
+
+      const link = res.headers.get("link");
+      url = link?.includes("next")
+        ? link.match(/<([^>]+)>; rel="next"/)?.[1]
+        : null;
+    }
+
+    await sleep(300);
+  }
+
+  console.log("✅ Collects fetched\n");
+
+  /* ===== STEP 3: BUILD PRODUCTS ===== */
+
+  console.log("⚙️ Processing products...");
+
+  const finalProducts = allProducts.map(p => {
+
+    const node = p.node;
+    const productId = node.id.split("/").pop();
+
+    const positions = p.collections.map(c =>
+      collectsMap[c.id]?.[productId]
+    ).filter(Boolean);
+
+    const position = positions.length
+      ? Math.min(...positions)
+      : Number.MAX_SAFE_INTEGER;
+
+    const variants = node.variants.edges.map(v => v.node);
+
+    const price = variants.length
+      ? Math.min(...variants.map(v => parseFloat(v.price)))
+      : 0;
+
+    const inventory = variants.reduce(
+      (sum, v) => sum + (v.inventoryQuantity || 0),
+      0
+    );
+
+    return {
+      id: productId,
+      title: node.title,
+      handle: node.handle,
+      vendor: node.vendor,
+      product_type: node.productType,
+      collection_handle: p.collections.map(c => c.handle),
+
+      position,
+      price,
+      image: node.images.edges[0]?.node.url || null,
+
+      inventory_quantity: inventory,
+      status: node.status,
+      published: node.status === "ACTIVE",
+
+      created_at: node.createdAt,
+      published_at: node.publishedAt
+    };
+  });
+
+  console.log("✅ Processed products:", finalProducts.length);
+
+  /* ===== STEP 4: UPSERT ===== */
+
+  console.log("\n⬆️ Uploading to Supabase...");
+
+  const { error } = await supabase
+    .from("products")
+    .upsert(finalProducts, { onConflict: "id" });
+
+  if (error) {
+    console.error("❌ SUPABASE ERROR:", error.message);
+    return;
+  }
+
+  console.log("🎉 SYNC COMPLETE:", finalProducts.length);
 }
 
 /* ================= RUN ================= */
 
-syncProducts();
+syncProducts().catch(err => {
+  console.error("🔥 FINAL ERROR:", err);
+});
