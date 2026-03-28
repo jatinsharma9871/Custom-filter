@@ -11,37 +11,109 @@ const supabase = createClient(
   "sb_publishable_7QPCLDGw0t6YloSbtA6Y0w_weJ86qO5"
 );
 
+
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 /* ================= SHOPIFY FETCH ================= */
 
 async function shopifyFetch(query) {
-  try {
-    const res = await fetch(
-      `https://${SHOP}/admin/api/2024-01/graphql.json`,
-      {
-        method: "POST",
-        headers: {
-          "X-Shopify-Access-Token": TOKEN,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ query })
-      }
-    );
+  const res = await fetch(
+    `https://${SHOP}/admin/api/2024-01/graphql.json`,
+    {
+      method: "POST",
+      headers: {
+        "X-Shopify-Access-Token": TOKEN,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ query })
+    }
+  );
 
-    const json = await res.json();
+  const json = await res.json();
 
-    if (!res.ok || json.errors) {
-      console.error("❌ Shopify Error:", json.errors);
-      throw new Error("Shopify API failed");
+  if (!res.ok || json.errors) {
+    console.error("❌ Shopify Error:", json.errors);
+    throw new Error("Shopify API failed");
+  }
+
+  return json;
+}
+
+/* ================= FETCH COLLECTS ================= */
+
+async function fetchAllCollects(collectionIds) {
+  const result = {};
+
+  for (const id of collectionIds) {
+
+    console.log(`➡️ Fetching collects for collection ${id}`);
+
+    let url = `https://${SHOP}/admin/api/2024-01/collects.json?collection_id=${id}&limit=250`;
+    result[id] = {};
+
+    while (url) {
+      const res = await fetch(url, {
+        headers: { "X-Shopify-Access-Token": TOKEN }
+      });
+
+      const data = await res.json();
+
+      (data.collects || []).forEach(c => {
+        result[id][c.product_id] = c.position;
+      });
+
+      const link = res.headers.get("link");
+      url = link?.includes("next")
+        ? link.match(/<([^>]+)>; rel="next"/)?.[1]
+        : null;
     }
 
-    return json;
-
-  } catch (err) {
-    console.error("❌ Fetch failed:", err.message);
-    throw err;
+    await sleep(300);
   }
+
+  console.log("✅ Collects fetched\n");
+  return result;
+}
+
+/* ================= BEST SELLING ================= */
+
+async function fetchBestSelling() {
+
+  console.log("🔥 Fetching best-selling...");
+
+  let hasNextPage = true;
+  let cursor = null;
+  let rank = 1;
+
+  const map = {};
+
+  while (hasNextPage) {
+
+    const query = `
+    {
+      products(first:250, sortKey:BEST_SELLING ${cursor ? `, after:"${cursor}"` : ""}) {
+        pageInfo { hasNextPage endCursor }
+        edges {
+          node { id }
+        }
+      }
+    }`;
+
+    const data = await shopifyFetch(query);
+
+    data.data.products.edges.forEach(p => {
+      const id = String(p.node.id.split("/").pop());
+      map[id] = rank++;
+    });
+
+    hasNextPage = data.data.products.pageInfo.hasNextPage;
+    cursor = data.data.products.pageInfo.endCursor;
+
+    await sleep(500);
+  }
+
+  console.log("✅ Best-selling fetched\n");
+  return map;
 }
 
 /* ================= MAIN SYNC ================= */
@@ -52,7 +124,7 @@ async function syncProducts() {
 
   let hasNextPage = true;
   let cursor = null;
-  let pageCount = 0;
+  let page = 0;
 
   const allProducts = [];
   const allCollectionIds = new Set();
@@ -61,9 +133,8 @@ async function syncProducts() {
 
   while (hasNextPage) {
 
-    pageCount++;
-
-    console.log(`📦 Fetching page ${pageCount}...`);
+    page++;
+    console.log(`📦 Fetching page ${page}...`);
 
     const query = `
     {
@@ -105,9 +176,9 @@ async function syncProducts() {
 
     const data = await shopifyFetch(query);
 
-    const edges = data?.data?.products?.edges || [];
+    const edges = data.data.products.edges;
 
-    console.log(`➡️ Products in page ${pageCount}:`, edges.length);
+    console.log(`➡️ Products in page ${page}: ${edges.length}`);
 
     edges.forEach(p => {
       const node = p.node;
@@ -124,7 +195,7 @@ async function syncProducts() {
       allProducts.push({ node, collections });
     });
 
-    console.log(`📊 Total products so far: ${allProducts.length}\n`);
+    console.log(`📊 Total so far: ${allProducts.length}\n`);
 
     hasNextPage = data.data.products.pageInfo.hasNextPage;
     cursor = data.data.products.pageInfo.endCursor;
@@ -132,51 +203,24 @@ async function syncProducts() {
     await sleep(600);
   }
 
-  console.log("✅ TOTAL PRODUCTS FETCHED:", allProducts.length);
+  console.log("✅ TOTAL PRODUCTS:", allProducts.length, "\n");
 
-  /* ===== STEP 2: FETCH COLLECTS ===== */
+  /* ===== STEP 2: COLLECTS ===== */
 
-  console.log("\n📦 Fetching collection positions...");
+  const collectsMap = await fetchAllCollects([...allCollectionIds]);
 
-  const collectsMap = {};
+  /* ===== STEP 3: BEST SELLING ===== */
 
-  for (const id of allCollectionIds) {
+  const bestSellingMap = await fetchBestSelling();
 
-    console.log(`➡️ Fetching collects for collection ${id}`);
-
-    let url = `https://${SHOP}/admin/api/2024-01/collects.json?collection_id=${id}&limit=250`;
-    collectsMap[id] = {};
-
-    while (url) {
-      const res = await fetch(url, {
-        headers: { "X-Shopify-Access-Token": TOKEN }
-      });
-
-      const data = await res.json();
-
-      (data.collects || []).forEach(c => {
-        collectsMap[id][c.product_id] = c.position;
-      });
-
-      const link = res.headers.get("link");
-      url = link?.includes("next")
-        ? link.match(/<([^>]+)>; rel="next"/)?.[1]
-        : null;
-    }
-
-    await sleep(300);
-  }
-
-  console.log("✅ Collects fetched\n");
-
-  /* ===== STEP 3: BUILD PRODUCTS ===== */
+  /* ===== STEP 4: PROCESS ===== */
 
   console.log("⚙️ Processing products...");
 
   const finalProducts = allProducts.map(p => {
 
     const node = p.node;
-    const productId = node.id.split("/").pop();
+    const productId = String(node.id.split("/").pop());
 
     const positions = p.collections.map(c =>
       collectsMap[c.id]?.[productId]
@@ -198,7 +242,7 @@ async function syncProducts() {
     );
 
     return {
-      id: productId,
+      id: productId, // ✅ STRING SAFE
       title: node.title,
       handle: node.handle,
       vendor: node.vendor,
@@ -206,6 +250,8 @@ async function syncProducts() {
       collection_handle: p.collections.map(c => c.handle),
 
       position,
+      best_selling_rank: bestSellingMap[productId] || 9999,
+
       price,
       image: node.images.edges[0]?.node.url || null,
 
@@ -218,22 +264,33 @@ async function syncProducts() {
     };
   });
 
-  console.log("✅ Processed products:", finalProducts.length);
+  console.log("✅ Processed:", finalProducts.length);
 
-  /* ===== STEP 4: UPSERT ===== */
+  /* ===== STEP 5: BATCH UPLOAD ===== */
 
   console.log("\n⬆️ Uploading to Supabase...");
 
-  const { error } = await supabase
-    .from("products")
-    .upsert(finalProducts, { onConflict: "id" });
+  const chunkSize = 500;
 
-  if (error) {
-    console.error("❌ SUPABASE ERROR:", error.message);
-    return;
+  for (let i = 0; i < finalProducts.length; i += chunkSize) {
+
+    const chunk = finalProducts.slice(i, i + chunkSize);
+
+    console.log(`⬆️ Batch ${i / chunkSize + 1}`);
+
+    const { error } = await supabase
+      .from("products")
+      .upsert(chunk, { onConflict: "id" });
+
+    if (error) {
+      console.error("❌ Batch error:", error.message);
+      return;
+    }
+
+    await sleep(200);
   }
 
-  console.log("🎉 SYNC COMPLETE:", finalProducts.length);
+  console.log("\n🎉 SYNC COMPLETE:", finalProducts.length);
 }
 
 /* ================= RUN ================= */
