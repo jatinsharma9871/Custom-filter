@@ -11,7 +11,6 @@ const supabase = createClient(
   "sb_publishable_7QPCLDGw0t6YloSbtA6Y0w_weJ86qO5"
 );
 
-
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 /* ================= SHOPIFY FETCH ================= */
@@ -45,7 +44,6 @@ async function fetchAllCollects(collectionIds) {
   const result = {};
 
   for (const id of collectionIds) {
-
     console.log(`➡️ Fetching collects for collection ${id}`);
 
     let url = `https://${SHOP}/admin/api/2024-01/collects.json?collection_id=${id}&limit=250`;
@@ -68,7 +66,7 @@ async function fetchAllCollects(collectionIds) {
         : null;
     }
 
-    await sleep(300);
+    await sleep(200);
   }
 
   console.log("✅ Collects fetched\n");
@@ -78,8 +76,10 @@ async function fetchAllCollects(collectionIds) {
 /* ================= BEST SELLING ================= */
 
 async function fetchBestSelling() {
-
   console.log("🔥 Fetching best-selling...");
+
+  // ⚠️ Use a REAL collection ID (replace this)
+  const COLLECTION_ID = "gid://shopify/Collection/309319958621";
 
   let hasNextPage = true;
   let cursor = null;
@@ -88,38 +88,43 @@ async function fetchBestSelling() {
   const map = {};
 
   while (hasNextPage) {
-
     const query = `
     {
-      products(first:250, sortKey:BEST_SELLING ${cursor ? `, after:"${cursor}"` : ""}) {
-        pageInfo { hasNextPage endCursor }
-        edges {
-          node { id }
+      collection(id: "${COLLECTION_ID}") {
+        products(
+          first: 250
+          sortKey: BEST_SELLING
+          ${cursor ? `, after:"${cursor}"` : ""}
+        ) {
+          pageInfo { hasNextPage endCursor }
+          edges {
+            node { id }
+          }
         }
       }
     }`;
 
     const data = await shopifyFetch(query);
 
-    data.data.products.edges.forEach(p => {
-      const id = String(p.node.id.split("/").pop());
+    const products = data.data.collection.products;
+
+    products.edges.forEach(p => {
+      const id = p.node.id.split("/").pop();
       map[id] = rank++;
     });
 
-    hasNextPage = data.data.products.pageInfo.hasNextPage;
-    cursor = data.data.products.pageInfo.endCursor;
+    hasNextPage = products.pageInfo.hasNextPage;
+    cursor = products.pageInfo.endCursor;
 
-    await sleep(500);
+    await sleep(400);
   }
 
   console.log("✅ Best-selling fetched\n");
   return map;
 }
-
 /* ================= MAIN SYNC ================= */
 
 async function syncProducts() {
-
   console.log("🚀 STARTING SYNC...\n");
 
   let hasNextPage = true;
@@ -132,7 +137,6 @@ async function syncProducts() {
   /* ===== STEP 1: FETCH PRODUCTS ===== */
 
   while (hasNextPage) {
-
     page++;
     console.log(`📦 Fetching page ${page}...`);
 
@@ -175,7 +179,6 @@ async function syncProducts() {
     }`;
 
     const data = await shopifyFetch(query);
-
     const edges = data.data.products.edges;
 
     console.log(`➡️ Products in page ${page}: ${edges.length}`);
@@ -200,17 +203,15 @@ async function syncProducts() {
     hasNextPage = data.data.products.pageInfo.hasNextPage;
     cursor = data.data.products.pageInfo.endCursor;
 
-    await sleep(600);
+    await sleep(500);
   }
 
   console.log("✅ TOTAL PRODUCTS:", allProducts.length, "\n");
 
   /* ===== STEP 2: COLLECTS ===== */
-
   const collectsMap = await fetchAllCollects([...allCollectionIds]);
 
   /* ===== STEP 3: BEST SELLING ===== */
-
   const bestSellingMap = await fetchBestSelling();
 
   /* ===== STEP 4: PROCESS ===== */
@@ -218,17 +219,14 @@ async function syncProducts() {
   console.log("⚙️ Processing products...");
 
   const finalProducts = allProducts.map(p => {
-
     const node = p.node;
-    const productId = String(node.id.split("/").pop());
+    const productId = node.id.split("/").pop();
 
-    const positions = p.collections.map(c =>
-      collectsMap[c.id]?.[productId]
-    ).filter(Boolean);
+    const positions = p.collections
+      .map(c => collectsMap[c.id]?.[productId])
+      .filter(v => v !== undefined && v !== null); // ✅ FIXED
 
-    const position = positions.length
-      ? Math.min(...positions)
-      : Number.MAX_SAFE_INTEGER;
+    const position = positions.length ? Math.min(...positions) : 9999;
 
     const variants = node.variants.edges.map(v => v.node);
 
@@ -242,7 +240,7 @@ async function syncProducts() {
     );
 
     return {
-      id: productId, // ✅ STRING SAFE
+      id: productId,
       title: node.title,
       handle: node.handle,
       vendor: node.vendor,
@@ -250,7 +248,7 @@ async function syncProducts() {
       collection_handle: p.collections.map(c => c.handle),
 
       position,
-      best_selling_rank: bestSellingMap[productId] || 9999,
+      best_selling_rank: bestSellingMap[productId] ?? 9999, // ✅ FIXED
 
       price,
       image: node.images.edges[0]?.node.url || null,
@@ -266,14 +264,13 @@ async function syncProducts() {
 
   console.log("✅ Processed:", finalProducts.length);
 
-  /* ===== STEP 5: BATCH UPLOAD ===== */
+  /* ===== STEP 5: UPLOAD ===== */
 
   console.log("\n⬆️ Uploading to Supabase...");
 
   const chunkSize = 500;
 
   for (let i = 0; i < finalProducts.length; i += chunkSize) {
-
     const chunk = finalProducts.slice(i, i + chunkSize);
 
     console.log(`⬆️ Batch ${i / chunkSize + 1}`);
@@ -287,7 +284,7 @@ async function syncProducts() {
       return;
     }
 
-    await sleep(200);
+    await sleep(150);
   }
 
   console.log("\n🎉 SYNC COMPLETE:", finalProducts.length);
