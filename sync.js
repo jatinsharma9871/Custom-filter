@@ -250,7 +250,7 @@ async function syncProducts() {
 const metafields = node.metafields?.edges || [];
 
 const deliveryTimeline = metafields.find(
-  m => m.node.namespace === "custom" && m.node.key === "delivery_timeline"
+  m => m.node.namespace === "custom" && m.node.key === "delivery_time"
 )?.node.value || null;
 
     return {
