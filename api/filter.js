@@ -24,8 +24,9 @@ export default async function handler(req, res) {
       product_type,
       color,
       fabric,
+      delivery_timeline, // ✅ NEW
       page,
-      sort_by // ✅ NEW
+      sort_by
     } = req.query;
 
     if (!collection) {
@@ -137,7 +138,18 @@ export default async function handler(req, res) {
       });
     }
 
-    /* ================= FORMAT PRODUCTS ================= */
+    // ✅ DELIVERY TIMELINE FILTER
+    if (delivery_timeline) {
+      const timelines = Array.isArray(delivery_timeline)
+        ? delivery_timeline
+        : delivery_timeline.split(",");
+
+      products = products.filter(p =>
+        timelines.includes(p.delivery_timeline)
+      );
+    }
+
+    /* ================= FORMAT ================= */
 
     let formattedProducts = products.map(p => ({
       ...p,
@@ -150,59 +162,46 @@ export default async function handler(req, res) {
       )
     }));
 
-    /* ================= SORTING (NEW) ================= */
+    /* ================= SORT ================= */
 
-/* ================= SORTING ================= */
-
-if (!sort_by) {
-  // 👉 Default (Shopify usually uses manual or best-selling depending on theme)
-  formattedProducts.sort((a, b) =>
-    new Date(b.created_at) - new Date(a.created_at)
-  );
-} else {
-  switch (sort_by) {
-
-    case "manual":
-      // 👉 IMPORTANT: requires position/index from Shopify
-      formattedProducts.sort((a, b) => (a.position || 0) - (b.position || 0));
-      break;
-
-    case "price-ascending":
-      formattedProducts.sort((a, b) => a.price - b.price);
-      break;
-
-    case "price-descending":
-      formattedProducts.sort((a, b) => b.price - a.price);
-      break;
-
-    case "title-ascending":
-      formattedProducts.sort((a, b) =>
-        a.title?.localeCompare(b.title)
-      );
-      break;
-
-    case "title-descending":
-      formattedProducts.sort((a, b) =>
-        b.title?.localeCompare(a.title)
-      );
-      break;
-
-    case "created-descending":
+    if (!sort_by) {
       formattedProducts.sort((a, b) =>
         new Date(b.created_at) - new Date(a.created_at)
       );
-      break;
+    } else {
+      switch (sort_by) {
+        case "manual":
+          formattedProducts.sort((a, b) => (a.position || 0) - (b.position || 0));
+          break;
+        case "price-ascending":
+          formattedProducts.sort((a, b) => a.price - b.price);
+          break;
+        case "price-descending":
+          formattedProducts.sort((a, b) => b.price - a.price);
+          break;
+        case "title-ascending":
+          formattedProducts.sort((a, b) =>
+            a.title?.localeCompare(b.title)
+          );
+          break;
+        case "title-descending":
+          formattedProducts.sort((a, b) =>
+            b.title?.localeCompare(a.title)
+          );
+          break;
+        case "created-descending":
+          formattedProducts.sort((a, b) =>
+            new Date(b.created_at) - new Date(a.created_at)
+          );
+          break;
+        case "created-ascending":
+          formattedProducts.sort((a, b) =>
+            new Date(a.created_at) - new Date(b.created_at)
+          );
+          break;
+      }
+    }
 
-    case "created-ascending":
-      formattedProducts.sort((a, b) =>
-        new Date(a.created_at) - new Date(b.created_at)
-      );
-      break;
-
-    default:
-      break;
-  }
-}
     /* ================= PAGINATION ================= */
 
     const currentPage = Number(page) || 1;
@@ -223,6 +222,7 @@ if (!sort_by) {
     const colorCounts = {};
     const sizeAvailability = {};
     const fabricSet = new Set();
+    const deliverySet = new Set(); // ✅ NEW
 
     allProducts.forEach(p => {
       if (p.vendor) vendorCounts[p.vendor] = (vendorCounts[p.vendor] || 0) + 1;
@@ -234,6 +234,11 @@ if (!sort_by) {
 
       safeParse(p.fabric).forEach(f => fabricSet.add(f));
 
+      // ✅ DELIVERY COLLECT
+      if (p.delivery_timeline) {
+        deliverySet.add(p.delivery_timeline);
+      }
+
       safeParse(p.variants).forEach(v => {
         if (!v.size) return;
         if (!sizeAvailability[v.size]) sizeAvailability[v.size] = false;
@@ -241,27 +246,12 @@ if (!sort_by) {
       });
     });
 
-    const vendors = Object.keys(vendorCounts).map(name => ({
-      name,
-      count: vendorCounts[name]
-    }));
-
-    const productTypes = Object.keys(typeCounts).map(name => ({
-      name,
-      count: typeCounts[name]
-    }));
-
-    const colors = Object.keys(colorCounts).map(name => ({
-      name,
-      count: colorCounts[name]
-    }));
-
-    const sizes = Object.keys(sizeAvailability).map(name => ({
-      name,
-      available: sizeAvailability[name]
-    }));
-
+    const vendors = Object.keys(vendorCounts).map(name => ({ name, count: vendorCounts[name] }));
+    const productTypes = Object.keys(typeCounts).map(name => ({ name, count: typeCounts[name] }));
+    const colors = Object.keys(colorCounts).map(name => ({ name, count: colorCounts[name] }));
+    const sizes = Object.keys(sizeAvailability).map(name => ({ name, available: sizeAvailability[name] }));
     const fabrics = [...fabricSet];
+    const delivery_time = [...deliverySet]; // ✅ NEW
 
     const prices = formattedProducts.map(p => p.price);
     const min = prices.length ? Math.min(...prices) : 0;
@@ -276,6 +266,7 @@ if (!sort_by) {
         colors,
         sizes,
         fabrics,
+        delivery_time, // ✅ NEW
         priceRange: { min, max }
       },
       products: paginatedProducts,

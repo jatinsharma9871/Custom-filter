@@ -154,13 +154,21 @@ async function syncProducts() {
             status
             createdAt
             publishedAt
+             metafields(first: 20) {
+  edges {
+    node {
+      key
+      value
+      namespace
+    }
+  }
+}
 
-            collections(first:50){
+            collections(first:150){
               edges{
                 node{ id handle }
               }
             }
-
             images(first:1){
               edges{ node{ url } }
             }
@@ -219,6 +227,7 @@ async function syncProducts() {
   console.log("⚙️ Processing products...");
 
   const finalProducts = allProducts.map(p => {
+
     const node = p.node;
     const productId = node.id.split("/").pop();
 
@@ -238,6 +247,11 @@ async function syncProducts() {
       (sum, v) => sum + (v.inventoryQuantity || 0),
       0
     );
+const metafields = node.metafields?.edges || [];
+
+const deliveryTimeline = metafields.find(
+  m => m.node.namespace === "custom" && m.node.key === "delivery_timeline"
+)?.node.value || null;
 
     return {
       id: productId,
@@ -256,7 +270,7 @@ async function syncProducts() {
       inventory_quantity: inventory,
       status: node.status,
       published: node.status === "ACTIVE",
-
+ delivery_timeline: deliveryTimeline,
       created_at: node.createdAt,
       published_at: node.publishedAt
     };
