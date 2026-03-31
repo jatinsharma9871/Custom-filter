@@ -6,6 +6,7 @@ const supabase = createClient(
 );
 
 export default async function handler(req, res) {
+  // ✅ CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -23,7 +24,7 @@ export default async function handler(req, res) {
       product_type,
       color,
       fabric,
-      delivery_timeline,
+      delivery_timeline, // ✅ FIXED
       page,
       sort_by
     } = req.query;
@@ -125,32 +126,21 @@ export default async function handler(req, res) {
       });
     }
 
-    // ✅ COLOR FILTER (FINAL FIX)
+    // Color
     if (color) {
       const selected = Array.isArray(color) ? color : color.split(",");
-
       products = products.filter(p => {
-        const variants = safeParse(p.variants);
+        const productColors = safeParse(p.color).map(c => c.toLowerCase());
+        const variantColors = safeParse(p.variants).map(v => (v.color || "").toLowerCase());
 
-        const allColors = [
-          ...safeParse(p.color),
-          ...variants.map(v =>
-            v.color ||
-            v.option1 ||
-            v.option2 ||
-            (v.title ? v.title.split("/")[0] : null)
-          )
-        ]
-          .filter(Boolean)
-          .map(c => c.toLowerCase().trim());
-
-        return selected.some(sel =>
-          allColors.includes(sel.toLowerCase().trim())
+        return selected.some(c =>
+          productColors.some(pc => pc.includes(c.toLowerCase())) ||
+          variantColors.some(vc => vc.includes(c.toLowerCase()))
         );
       });
     }
 
-    // Delivery Timeline
+    // ✅ DELIVERY TIMELINE (FIXED)
     if (delivery_timeline) {
       const timelines = Array.isArray(delivery_timeline)
         ? delivery_timeline
@@ -192,6 +182,15 @@ export default async function handler(req, res) {
       case "price-descending":
         formattedProducts.sort((a, b) => b.price - a.price);
         break;
+      case "title-ascending":
+        formattedProducts.sort((a, b) => a.title?.localeCompare(b.title));
+        break;
+      case "title-descending":
+        formattedProducts.sort((a, b) => b.title?.localeCompare(a.title));
+        break;
+      case "created-ascending":
+        formattedProducts.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        break;
       default:
         formattedProducts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     }
@@ -201,6 +200,7 @@ export default async function handler(req, res) {
     const currentPage = Number(page) || 1;
     const limit = 12;
     const total = formattedProducts.length;
+    const totalPages = Math.ceil(total / limit);
 
     const paginatedProducts = formattedProducts.slice(
       (currentPage - 1) * limit,
@@ -212,50 +212,31 @@ export default async function handler(req, res) {
     const vendorCounts = {};
     const typeCounts = {};
     const colorCounts = {};
+    const sizeAvailability = {};
     const fabricSet = new Set();
     const deliverySet = new Set();
 
     allProducts.forEach(p => {
+      if (p.vendor) vendorCounts[p.vendor] = (vendorCounts[p.vendor] || 0) + 1;
+      if (p.product_type) typeCounts[p.product_type] = (typeCounts[p.product_type] || 0) + 1;
 
-      if (p.vendor)
-        vendorCounts[p.vendor] = (vendorCounts[p.vendor] || 0) + 1;
-
-      if (p.product_type)
-        typeCounts[p.product_type] = (typeCounts[p.product_type] || 0) + 1;
-
-      const variants = safeParse(p.variants);
-
-      const allColors = [
-        ...safeParse(p.color),
-        ...variants.map(v =>
-          v.color ||
-          v.option1 ||
-          v.option2 ||
-          (v.title ? v.title.split("/")[0] : null)
-        )
-      ];
-
-      allColors.forEach(c => {
-        if (!c) return;
-
-        const normalized = c.toLowerCase().trim();
-
-        if (
-          !normalized ||
-          normalized.includes("default") ||
-          normalized === "title"
-        ) return;
-
-        colorCounts[normalized] =
-          (colorCounts[normalized] || 0) + 1;
+      safeParse(p.color).forEach(c => {
+        colorCounts[c] = (colorCounts[c] || 0) + 1;
       });
 
       safeParse(p.fabric).forEach(f => fabricSet.add(f));
 
-      parseDelivery(p.delivery_timeline).forEach(v => {
+      // ✅ CLEAN DELIVERY VALUES
+      const values = parseDelivery(p.delivery_timeline);
+      values.forEach(v => {
         if (v && v.trim()) deliverySet.add(v.trim());
       });
 
+      safeParse(p.variants).forEach(v => {
+        if (!v.size) return;
+        if (!sizeAvailability[v.size]) sizeAvailability[v.size] = false;
+        if (v.inventory_quantity > 0) sizeAvailability[v.size] = true;
+      });
     });
 
     /* ================= RESPONSE ================= */
@@ -264,27 +245,19 @@ export default async function handler(req, res) {
       filters: {
         vendors: Object.keys(vendorCounts).map(name => ({ name, count: vendorCounts[name] })),
         productTypes: Object.keys(typeCounts).map(name => ({ name, count: typeCounts[name] })),
-
-        colors: Object.keys(colorCounts).map(name => ({
-          name: name.charAt(0).toUpperCase() + name.slice(1),
-          value: name,
-          count: colorCounts[name]
-        })),
-
+        colors: Object.keys(colorCounts).map(name => ({ name, count: colorCounts[name] })),
+        sizes: Object.keys(sizeAvailability).map(name => ({ name, available: sizeAvailability[name] })),
         fabrics: [...fabricSet],
-        delivery_time: [...deliverySet].sort(),
-
+        delivery_time: [...deliverySet].sort(), // ✅ CLEAN
         priceRange: {
           min: Math.min(...formattedProducts.map(p => p.price)),
           max: Math.max(...formattedProducts.map(p => p.price))
         }
       },
-
       products: paginatedProducts,
-
       pagination: {
         total,
-        totalPages: Math.ceil(total / limit),
+        totalPages,
         currentPage
       }
     });

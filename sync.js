@@ -173,7 +173,7 @@ async function syncProducts() {
               edges{ node{ url } }
             }
 
-            variants(first:50){
+            variants(first:150){
               edges{
                 node{
                   price
