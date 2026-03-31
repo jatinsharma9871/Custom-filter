@@ -39,12 +39,12 @@ export default async function handler(req, res) {
 
     /* ================= FETCH ================= */
 
-    let { data: allProducts, error } = await supabase
+  let { data: allProducts, error } = await supabase
   .from("products")
   .select("*")
   .eq("status", "ACTIVE")
   .eq("published", true)
-  .ilike("collection_handle", `%${normalizedCollection}%`);
+  .contains("collection_handle", [normalizedCollection]);
 
 // 🔥 FALLBACK if empty
 if (!allProducts || allProducts.length === 0) {
