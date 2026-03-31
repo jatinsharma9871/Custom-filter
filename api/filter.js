@@ -234,10 +234,33 @@ export default async function handler(req, res) {
       if (p.product_type) typeCounts[p.product_type] = (typeCounts[p.product_type] || 0) + 1;
 
       // ✅ COLOR FIX (IMPORTANT)
-      const productColors = safeParse(p.color);
-      const variantColors = safeParse(p.variants).map(v => v.color);
+      const variants = safeParse(p.variants);
 
-      const allColors = [...productColors, ...variantColors];
+const allColors = [
+  ...safeParse(p.color),
+
+  ...variants.map(v =>
+    v.color ||
+    v.option1 ||
+    v.option2 ||
+    (v.title ? v.title.split("/")[0] : null)
+  )
+];
+
+allColors.forEach(c => {
+  if (!c) return;
+
+  const normalized = c.toLowerCase().trim();
+
+  // ❌ remove garbage values
+  if (
+    !normalized ||
+    normalized.includes("default") ||
+    normalized === "title"
+  ) return;
+
+  colorCounts[normalized] = (colorCounts[normalized] || 0) + 1;
+});
 
       allColors.forEach(c => {
         if (!c) return;
