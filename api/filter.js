@@ -59,7 +59,7 @@ export default async function handler(req, res) {
       });
     }
 
-    /* ================= SAFE PARSE ================= */
+    /* ================= HELPERS ================= */
 
     const safeParse = (value) => {
       try {
@@ -77,38 +77,44 @@ export default async function handler(req, res) {
       }
     };
 
-    /* ================= FILTER ================= */
+    const normalize = (v) => String(v || "").trim().toLowerCase();
+
+    const sortAlpha = (arr) =>
+      arr.sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: "base" })
+      );
+
+    /* ================= FILTER PRODUCTS ================= */
 
     let products = allProducts.filter(p => {
       if (p.inventory_quantity > 0) return true;
-
       const variants = safeParse(p.variants);
       return variants.some(v => v.inventory_quantity > 0 || v.available === true);
     });
 
-    // Fabric
-    if (fabric) {
-      const list = Array.isArray(fabric) ? fabric : fabric.split(",");
-
-      products = products.filter(p => {
-        const pf = safeParse(p.fabric).map(f => f?.toLowerCase?.());
-        return list.some(f => pf.includes(f.toLowerCase()));
-      });
-    }
-
     // Vendor
     if (vendor) {
       const list = Array.isArray(vendor) ? vendor : vendor.split(",");
-      products = products.filter(p => list.includes(p.vendor));
+      products = products.filter(p =>
+        list.some(v => normalize(v) === normalize(p.vendor))
+      );
     }
 
-    // Product type
+    // Product Type
     if (product_type) {
-      const list = Array.isArray(product_type)
-        ? product_type
-        : product_type.split(",");
+      const list = Array.isArray(product_type) ? product_type : product_type.split(",");
+      products = products.filter(p =>
+        list.some(v => normalize(v) === normalize(p.product_type))
+      );
+    }
 
-      products = products.filter(p => list.includes(p.product_type));
+    // Fabric
+    if (fabric) {
+      const list = Array.isArray(fabric) ? fabric : fabric.split(",");
+      products = products.filter(p => {
+        const pf = safeParse(p.fabric).map(normalize);
+        return list.some(f => pf.includes(normalize(f)));
+      });
     }
 
     // Price
@@ -124,31 +130,25 @@ export default async function handler(req, res) {
     // Color
     if (color) {
       const list = Array.isArray(color) ? color : color.split(",");
-
       products = products.filter(p => {
-        const pc = safeParse(p.color).map(c => c.toLowerCase());
-        const vc = safeParse(p.variants).map(v => (v.color || "").toLowerCase());
-
+        const pc = safeParse(p.color).map(normalize);
+        const vc = safeParse(p.variants).map(v => normalize(v.color));
         return list.some(c =>
-          pc.some(x => x.includes(c.toLowerCase())) ||
-          vc.some(x => x.includes(c.toLowerCase()))
+          pc.some(x => x.includes(normalize(c))) ||
+          vc.some(x => x.includes(normalize(c)))
         );
       });
     }
 
-    // ✅ DELIVERY FILTER
+    // Delivery
     if (delivery_timeline) {
       const list = Array.isArray(delivery_timeline)
         ? delivery_timeline
         : delivery_timeline.split(",");
 
       products = products.filter(p => {
-        const pd = safeParse(p.delivery_timeline)
-          .map(d => String(d).toLowerCase().trim());
-
-        return list.some(t =>
-          pd.some(d => d === t.toLowerCase().trim())
-        );
+        const pd = safeParse(p.delivery_timeline).map(normalize);
+        return list.some(t => pd.includes(normalize(t)));
       });
     }
 
@@ -205,24 +205,37 @@ export default async function handler(req, res) {
     const deliverySet = new Set();
 
     allProducts.forEach(p => {
-      if (p.vendor) vendorCounts[p.vendor] = (vendorCounts[p.vendor] || 0) + 1;
-      if (p.product_type) typeCounts[p.product_type] = (typeCounts[p.product_type] || 0) + 1;
-
-      safeParse(p.color).forEach(c => colorCounts[c] = (colorCounts[c] || 0) + 1);
-      safeParse(p.fabric).forEach(f => fabricSet.add(f));
-
-      // ✅ DELIVERY CLEAN
-      const values = safeParse(p.delivery_timeline);
-
-      if (values.length) {
-        values.forEach(d => {
-          const clean = String(d).replace(/[\[\]"]/g, "").trim();
-          if (clean) deliverySet.add(clean);
-        });
-      } else {
-        // deliverySet.add("Standard Delivery");
+      // vendor
+      if (p.vendor) {
+        const v = String(p.vendor).trim();
+        vendorCounts[v] = (vendorCounts[v] || 0) + 1;
       }
 
+      // product type
+      if (p.product_type) {
+        const t = String(p.product_type).trim();
+        typeCounts[t] = (typeCounts[t] || 0) + 1;
+      }
+
+      // colors
+      safeParse(p.color).forEach(c => {
+        const clean = String(c).trim();
+        if (clean) colorCounts[clean] = (colorCounts[clean] || 0) + 1;
+      });
+
+      // fabric
+      safeParse(p.fabric).forEach(f => {
+        const clean = String(f).trim();
+        if (clean) fabricSet.add(clean);
+      });
+
+      // delivery
+      safeParse(p.delivery_timeline).forEach(d => {
+        const clean = String(d).replace(/[\[\]"]/g, "").trim();
+        if (clean) deliverySet.add(clean);
+      });
+
+      // size
       safeParse(p.variants).forEach(v => {
         if (!v.size) return;
         if (!sizeAvailability[v.size]) sizeAvailability[v.size] = false;
@@ -230,48 +243,52 @@ export default async function handler(req, res) {
       });
     });
 
-  const parseTimeline = (text) => {
-  const t = text.toLowerCase().trim();
+    /* ================= DELIVERY SORT ================= */
 
-  // hours → highest priority
-  if (t.includes("hour")) {
-    const num = parseInt(t);
-    return num || 0; // 24h → 24, 72h → 72
-  }
+    const parseTimeline = (text) => {
+      const t = text.toLowerCase();
 
-  // weeks
-  if (t.includes("week")) {
-    const match = t.match(/\d+/);
-    return match ? parseInt(match[0]) * 168 : 9999; // 1 week = 168h
-  }
+      if (t.includes("hour")) return parseInt(t) || 0;
+      if (t.includes("week")) return (parseInt(t) || 1) * 168;
 
-  // fallback
-  if (t.includes("standard")) return 99999;
-  if (t.includes("above")) return 99998;
+      if (t.includes("above")) return 99998;
+      if (t.includes("standard")) return 99999;
 
-  return 99997;
-};
+      return 99997;
+    };
 
-const delivery_timeline_final = [...deliverySet]
-  .filter(Boolean)
-  .sort((a, b) => parseTimeline(a) - parseTimeline(b));
+    const delivery_timeline_final = [...deliverySet]
+      .filter(Boolean)
+      .sort((a, b) => parseTimeline(a) - parseTimeline(b));
 
     /* ================= RESPONSE ================= */
 
     return res.status(200).json({
       filters: {
-        vendors: Object.keys(vendorCounts).map(n => ({ name: n, count: vendorCounts[n] })),
-        productTypes: Object.keys(typeCounts).map(n => ({ name: n, count: typeCounts[n] })),
-        colors: Object.keys(colorCounts).map(n => ({ name: n, count: colorCounts[n] })),
-        sizes: Object.keys(sizeAvailability).map(n => ({ name: n, available: sizeAvailability[n] })),
-        fabrics: [...fabricSet],
+        vendors: sortAlpha(Object.keys(vendorCounts))
+          .map(n => ({ name: n, count: vendorCounts[n] })),
+
+        productTypes: sortAlpha(Object.keys(typeCounts))
+          .map(n => ({ name: n, count: typeCounts[n] })),
+
+        colors: sortAlpha(Object.keys(colorCounts))
+          .map(n => ({ name: n, count: colorCounts[n] })),
+
+        sizes: sortAlpha(Object.keys(sizeAvailability))
+          .map(n => ({ name: n, available: sizeAvailability[n] })),
+
+        fabrics: sortAlpha([...fabricSet]),
+
         delivery_timeline: delivery_timeline_final,
+
         priceRange: {
           min: Math.min(...formattedProducts.map(p => p.price || 0)),
           max: Math.max(...formattedProducts.map(p => p.price || 0))
         }
       },
+
       products: paginatedProducts,
+
       pagination: {
         total,
         totalPages,
