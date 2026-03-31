@@ -239,12 +239,12 @@ export default async function handler(req, res) {
       safeParse(p.fabric).forEach(f => fabricSet.add(f));
 
       // ✅ DELIVERY COLLECT
-      if (p.delivery_timeline && p.delivery_timeline.trim() !== "") {
+     if (p.delivery_timeline && p.delivery_timeline.trim() !== "") {
   deliverySet.add(p.delivery_timeline.trim());
+} else {
+  deliverySet.add("Standard Delivery"); // 🔥 TEMP FIX
 }
-if (!p.delivery_timeline) {
-  deliverySet.add("Standard Delivery");
-}
+
 
       safeParse(p.variants).forEach(v => {
         if (!v.size) return;
@@ -273,7 +273,7 @@ if (!p.delivery_timeline) {
         colors,
         sizes,
         fabrics,
-        delivery_time, // ✅ NEW
+        delivery_timeline, // ✅ NEW
         priceRange: { min, max }
       },
       products: paginatedProducts,
