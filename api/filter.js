@@ -220,7 +220,7 @@ export default async function handler(req, res) {
           if (clean) deliverySet.add(clean);
         });
       } else {
-        deliverySet.add("Standard Delivery");
+        // deliverySet.add("Standard Delivery");
       }
 
       safeParse(p.variants).forEach(v => {
