@@ -45,7 +45,7 @@ export default async function handler(req, res) {
       .select("*")
       .eq("status", "ACTIVE")
       .eq("published", true)
-      .filter("collection_handle", "cs", `["${normalizedCollection}"]`)
+      .eq("collection_handle", normalizedCollection)
 
     if (error) {
       return res.status(500).json({ error: error.message });
