@@ -62,18 +62,24 @@ export default async function handler(req, res) {
     /* ================= SAFE PARSER ================= */
 
     const safeParse = (value) => {
-      try {
-        if (!value) return [];
-        if (Array.isArray(value)) return value;
-        if (typeof value === "string" && value.includes("[")) {
-          return JSON.parse(value);
-        }
-        return [value];
-      } catch {
-        return [];
-      }
-    };
+  try {
+    if (!value) return [];
 
+    // already array
+    if (Array.isArray(value)) return value;
+
+    // string JSON
+    if (typeof value === "string") {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed;
+      return [parsed];
+    }
+
+    return [value];
+  } catch {
+    return [String(value).replace(/[\[\]"]/g, "").trim()];
+  }
+};
     /* ================= FILTER PRODUCTS ================= */
 
     let products = allProducts.filter(p => {
@@ -140,16 +146,19 @@ export default async function handler(req, res) {
 
     // ✅ DELIVERY TIMELINE FILTER
     if (delivery_timeline) {
-      const timelines = Array.isArray(delivery_timeline)
-        ? delivery_timeline
-        : delivery_timeline.split(",");
+  const timelines = Array.isArray(delivery_timeline)
+    ? delivery_timeline
+    : delivery_timeline.split(",");
 
-      products = products.filter(p =>
-  timelines.some(t =>
-    (p.delivery_timeline || "").toLowerCase().trim() === t.toLowerCase().trim()
-  )
-);
-    }
+  products = products.filter(p => {
+    const productDelivery = safeParse(p.delivery_timeline)
+      .map(d => String(d).toLowerCase().trim());
+
+    return timelines.some(t =>
+      productDelivery.includes(t.toLowerCase().trim())
+    );
+  });
+}
 
     /* ================= FORMAT ================= */
 
@@ -237,10 +246,14 @@ export default async function handler(req, res) {
       safeParse(p.fabric).forEach(f => fabricSet.add(f));
 
       // ✅ DELIVERY COLLECT
-      if (p.delivery_timeline && p.delivery_timeline.trim() !== "") {
-  deliverySet.add(p.delivery_timeline.trim());
-}
-if (!p.delivery_timeline) {
+     const deliveryValues = safeParse(p.delivery_timeline);
+
+if (deliveryValues.length) {
+  deliveryValues.forEach(d => {
+    const clean = String(d).replace(/[\[\]"]/g, "").trim();
+    if (clean) deliverySet.add(clean);
+  });
+} else {
   deliverySet.add("Standard Delivery");
 }
 
@@ -271,7 +284,7 @@ if (!p.delivery_timeline) {
         colors,
         sizes,
         fabrics,
-        delivery_time, // ✅ NEW
+        delivery_timeline, // ✅ NEW
         priceRange: { min, max }
       },
       products: paginatedProducts,
