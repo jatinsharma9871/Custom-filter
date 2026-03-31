@@ -144,11 +144,9 @@ export default async function handler(req, res) {
         ? delivery_timeline
         : delivery_timeline.split(",");
 
-     products = products.filter(p =>
+      products = products.filter(p =>
   timelines.some(t =>
-    (p.delivery_timeline || "")
-      .toLowerCase()
-      .includes(t.toLowerCase())
+    (p.delivery_timeline || "").toLowerCase().trim() === t.toLowerCase().trim()
   )
 );
     }
@@ -239,12 +237,12 @@ export default async function handler(req, res) {
       safeParse(p.fabric).forEach(f => fabricSet.add(f));
 
       // ✅ DELIVERY COLLECT
-     if (p.delivery_timeline && p.delivery_timeline.trim() !== "") {
+      if (p.delivery_timeline && p.delivery_timeline.trim() !== "") {
   deliverySet.add(p.delivery_timeline.trim());
-} else {
-  deliverySet.add("Standard Delivery"); // 🔥 TEMP FIX
 }
-
+if (!p.delivery_timeline) {
+  deliverySet.add("Standard Delivery");
+}
 
       safeParse(p.variants).forEach(v => {
         if (!v.size) return;
@@ -258,7 +256,7 @@ export default async function handler(req, res) {
     const colors = Object.keys(colorCounts).map(name => ({ name, count: colorCounts[name] }));
     const sizes = Object.keys(sizeAvailability).map(name => ({ name, available: sizeAvailability[name] }));
     const fabrics = [...fabricSet];
-    const delivery_timeline = [...deliverySet]; // ✅ NEW
+    const delivery_time = [...deliverySet]; // ✅ NEW
 
     const prices = formattedProducts.map(p => p.price);
     const min = prices.length ? Math.min(...prices) : 0;
@@ -273,7 +271,7 @@ export default async function handler(req, res) {
         colors,
         sizes,
         fabrics,
-        delivery_timeline, // ✅ NEW
+        delivery_time, // ✅ NEW
         priceRange: { min, max }
       },
       products: paginatedProducts,
