@@ -41,12 +41,14 @@ export default async function handler(req, res) {
     /* ================= FETCH PRODUCTS ================= */
 
     const { data: allProducts, error } = await supabase
-      .from("products")
-      .select("*")
-      .eq("status", "ACTIVE")
-      .eq("published", true)
-      .eq("collection_handle", normalizedCollection)
-
+  .from("products")
+  .select("*")
+  .eq("status", "ACTIVE")
+  .eq("published", true)
+  .or(`
+    collection_handle.cs.["${normalizedCollection}"],
+    collection_handle.eq.${normalizedCollection}
+  `);
     if (error) {
       return res.status(500).json({ error: error.message });
     }
