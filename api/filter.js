@@ -6,6 +6,7 @@ const supabase = createClient(
 );
 
 export default async function handler(req, res) {
+  // ✅ CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -39,26 +40,12 @@ export default async function handler(req, res) {
 
     /* ================= FETCH ================= */
 
-  let { data: allProducts, error } = await supabase
-  .from("products")
-  .select("*")
-  .eq("status", "ACTIVE")
-  .eq("published", true)
-  .contains("collection_handle", [normalizedCollection]);
-
-// 🔥 FALLBACK if empty
-if (!allProducts || allProducts.length === 0) {
-  console.warn("⚠️ No collection match, using fallback");
-
-  const fallback = await supabase
-    .from("products")
-    .select("*")
-    .eq("status", "ACTIVE")
-    .eq("published", true)
-    .limit(200);
-
-  allProducts = fallback.data || [];
-}
+    const { data: allProducts, error } = await supabase
+      .from("products")
+      .select("*")
+      .eq("status", "ACTIVE")
+      .eq("published", true)
+      .filter("collection_handle", "cs", `["${normalizedCollection}"]`);
 
     if (error) {
       return res.status(500).json({ error: error.message });
@@ -105,6 +92,7 @@ if (!allProducts || allProducts.length === 0) {
       return variants.some(v => v.inventory_quantity > 0 || v.available === true);
     });
 
+    // Vendor
     if (vendor) {
       const list = Array.isArray(vendor) ? vendor : vendor.split(",");
       products = products.filter(p =>
@@ -112,6 +100,7 @@ if (!allProducts || allProducts.length === 0) {
       );
     }
 
+    // Product Type
     if (product_type) {
       const list = Array.isArray(product_type) ? product_type : product_type.split(",");
       products = products.filter(p =>
@@ -119,6 +108,7 @@ if (!allProducts || allProducts.length === 0) {
       );
     }
 
+    // Fabric
     if (fabric) {
       const list = Array.isArray(fabric) ? fabric : fabric.split(",");
       products = products.filter(p => {
@@ -127,6 +117,7 @@ if (!allProducts || allProducts.length === 0) {
       });
     }
 
+    // Price
     if (minPrice || maxPrice) {
       products = products.filter(p => {
         const price = Number(p.price || 0);
@@ -136,6 +127,7 @@ if (!allProducts || allProducts.length === 0) {
       });
     }
 
+    // Color
     if (color) {
       const list = Array.isArray(color) ? color : color.split(",");
       products = products.filter(p => {
@@ -148,6 +140,7 @@ if (!allProducts || allProducts.length === 0) {
       });
     }
 
+    // Delivery
     if (delivery_timeline) {
       const list = Array.isArray(delivery_timeline)
         ? delivery_timeline
@@ -175,6 +168,18 @@ if (!allProducts || allProducts.length === 0) {
       formattedProducts.sort((a, b) =>
         new Date(b.created_at) - new Date(a.created_at)
       );
+    } else {
+      const sortMap = {
+        "manual": (a, b) => (a.position || 0) - (b.position || 0),
+        "price-ascending": (a, b) => a.price - b.price,
+        "price-descending": (a, b) => b.price - a.price,
+        "title-ascending": (a, b) => a.title?.localeCompare(b.title),
+        "title-descending": (a, b) => b.title?.localeCompare(a.title),
+        "created-descending": (a, b) => new Date(b.created_at) - new Date(a.created_at),
+        "created-ascending": (a, b) => new Date(a.created_at) - new Date(b.created_at)
+      };
+
+      formattedProducts.sort(sortMap[sort_by] || (() => 0));
     }
 
     /* ================= PAGINATION ================= */
@@ -199,35 +204,38 @@ if (!allProducts || allProducts.length === 0) {
     const fabricSet = new Set();
     const deliverySet = new Set();
 
-    products.forEach(p => { // ✅ IMPORTANT CHANGE (was allProducts)
+    allProducts.forEach(p => {
+      // vendor
       if (p.vendor) {
-        const v = String(p.vendor)
-          .replace(/&/g, "and")
-          .replace(/\s+/g, " ")
-          .trim();
+        const v = String(p.vendor).trim();
         vendorCounts[v] = (vendorCounts[v] || 0) + 1;
       }
 
+      // product type
       if (p.product_type) {
         const t = String(p.product_type).trim();
         typeCounts[t] = (typeCounts[t] || 0) + 1;
       }
 
+      // colors
       safeParse(p.color).forEach(c => {
         const clean = String(c).trim();
         if (clean) colorCounts[clean] = (colorCounts[clean] || 0) + 1;
       });
 
+      // fabric
       safeParse(p.fabric).forEach(f => {
         const clean = String(f).trim();
         if (clean) fabricSet.add(clean);
       });
 
+      // delivery
       safeParse(p.delivery_timeline).forEach(d => {
         const clean = String(d).replace(/[\[\]"]/g, "").trim();
         if (clean) deliverySet.add(clean);
       });
 
+      // size
       safeParse(p.variants).forEach(v => {
         if (!v.size) return;
         if (!sizeAvailability[v.size]) sizeAvailability[v.size] = false;
@@ -235,36 +243,52 @@ if (!allProducts || allProducts.length === 0) {
       });
     });
 
+    /* ================= DELIVERY SORT ================= */
+
     const parseTimeline = (text) => {
       const t = text.toLowerCase();
+
       if (t.includes("hour")) return parseInt(t) || 0;
       if (t.includes("week")) return (parseInt(t) || 1) * 168;
+
       if (t.includes("above")) return 99998;
-      return 99999;
+      if (t.includes("standard")) return 99999;
+
+      return 99997;
     };
 
     const delivery_timeline_final = [...deliverySet]
       .filter(Boolean)
       .sort((a, b) => parseTimeline(a) - parseTimeline(b));
 
+    /* ================= RESPONSE ================= */
+
     return res.status(200).json({
       filters: {
         vendors: sortAlpha(Object.keys(vendorCounts))
           .map(n => ({ name: n, count: vendorCounts[n] })),
+
         productTypes: sortAlpha(Object.keys(typeCounts))
           .map(n => ({ name: n, count: typeCounts[n] })),
+
         colors: sortAlpha(Object.keys(colorCounts))
           .map(n => ({ name: n, count: colorCounts[n] })),
+
         sizes: sortAlpha(Object.keys(sizeAvailability))
           .map(n => ({ name: n, available: sizeAvailability[n] })),
+
         fabrics: sortAlpha([...fabricSet]),
+
         delivery_timeline: delivery_timeline_final,
+
         priceRange: {
           min: Math.min(...formattedProducts.map(p => p.price || 0)),
           max: Math.max(...formattedProducts.map(p => p.price || 0))
         }
       },
+
       products: paginatedProducts,
+
       pagination: {
         total,
         totalPages,
