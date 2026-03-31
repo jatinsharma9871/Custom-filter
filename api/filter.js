@@ -24,7 +24,7 @@ export default async function handler(req, res) {
       product_type,
       color,
       fabric,
-      delivery_timeline,
+      delivery_timeline, // ✅ FIXED
       page,
       sort_by
     } = req.query;
@@ -35,7 +35,8 @@ export default async function handler(req, res) {
 
     const normalizedCollection = String(collection)
       .trim()
-      .toLowerCase();
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]/g, "");
 
     /* ================= FETCH ================= */
 
@@ -44,8 +45,7 @@ export default async function handler(req, res) {
       .select("*")
       .eq("status", "ACTIVE")
       .eq("published", true)
-      // ✅ safer match
-      .ilike("collection_handle", `%${normalizedCollection}%`);
+      .filter("collection_handle", "cs", `["${normalizedCollection}"]`);
 
     if (error) {
       return res.status(500).json({ error: error.message });
@@ -65,95 +65,95 @@ export default async function handler(req, res) {
       try {
         if (!value) return [];
         if (Array.isArray(value)) return value;
-        if (typeof value === "string") {
-          if (value.startsWith("["))
-            return JSON.parse(value);
-          return [value];
+        if (typeof value === "string" && value.includes("[")) {
+          return JSON.parse(value);
         }
-        return [];
+        return [value];
       } catch {
         return [];
       }
     };
 
-    const normalize = (val) =>
-      String(val || "").toLowerCase().trim();
+    const parseDelivery = (val) => {
+      try {
+        if (!val) return [];
+        if (val.includes("[")) return JSON.parse(val);
+        return [val];
+      } catch {
+        return [val];
+      }
+    };
 
     /* ================= FILTER ================= */
 
     let products = allProducts.filter(p => {
       if (p.inventory_quantity > 0) return true;
-
       const variants = safeParse(p.variants);
       return variants.some(v => v.inventory_quantity > 0 || v.available);
     });
 
-    // ✅ Fabric
+    // Fabric
     if (fabric) {
-      const fabrics = fabric.split(",").map(normalize);
-
+      const fabrics = Array.isArray(fabric) ? fabric : fabric.split(",");
       products = products.filter(p =>
         safeParse(p.fabric).some(f =>
-          fabrics.includes(normalize(f))
+          fabrics.includes(f?.toLowerCase())
         )
       );
     }
 
-    // ✅ Vendor
+    // Vendor
     if (vendor) {
-      const vendors = vendor.split(",").map(normalize);
-
-      products = products.filter(p =>
-        vendors.includes(normalize(p.vendor))
-      );
+      const vendors = Array.isArray(vendor) ? vendor : vendor.split(",");
+      products = products.filter(p => vendors.includes(p.vendor));
     }
 
-    // ✅ Product Type
+    // Product Type
     if (product_type) {
-      const types = product_type.split(",").map(normalize);
-
-      products = products.filter(p =>
-        types.includes(normalize(p.product_type))
-      );
+      const types = Array.isArray(product_type)
+        ? product_type
+        : product_type.split(",");
+      products = products.filter(p => types.includes(p.product_type));
     }
 
-    // ✅ Price
+    // Price
     if (minPrice || maxPrice) {
       products = products.filter(p => {
         const price = Number(p.price || 0);
-
         if (minPrice && price < Number(minPrice)) return false;
         if (maxPrice && price > Number(maxPrice)) return false;
-
         return true;
       });
     }
 
-    // ✅ Color (FIXED matching)
+    // Color
     if (color) {
-      const selected = color.split(",").map(normalize);
-
+      const selected = Array.isArray(color) ? color : color.split(",");
       products = products.filter(p => {
-        const productColors = safeParse(p.color).map(normalize);
-        const variantColors = safeParse(p.variants).map(v =>
-          normalize(v.color)
-        );
+        const productColors = safeParse(p.color).map(c => c.toLowerCase());
+        const variantColors = safeParse(p.variants).map(v => (v.color || "").toLowerCase());
 
         return selected.some(c =>
-          productColors.includes(c) ||
-          variantColors.includes(c)
+          productColors.some(pc => pc.includes(c.toLowerCase())) ||
+          variantColors.some(vc => vc.includes(c.toLowerCase()))
         );
       });
     }
 
-    // ✅ DELIVERY TIMELINE (FIXED STRONGLY)
+    // ✅ DELIVERY TIMELINE (FIXED)
     if (delivery_timeline) {
-      const timelines = delivery_timeline.split(",").map(normalize);
+      const timelines = Array.isArray(delivery_timeline)
+        ? delivery_timeline
+        : delivery_timeline.split(",");
 
       products = products.filter(p => {
-        const values = safeParse(p.delivery_timeline).map(normalize);
+        const values = parseDelivery(p.delivery_timeline);
 
-        return values.some(v => timelines.includes(v));
+        return values.some(val =>
+          timelines.some(t =>
+            val.toLowerCase().trim() === t.toLowerCase().trim()
+          )
+        );
       });
     }
 
@@ -183,24 +183,16 @@ export default async function handler(req, res) {
         formattedProducts.sort((a, b) => b.price - a.price);
         break;
       case "title-ascending":
-        formattedProducts.sort((a, b) =>
-          (a.title || "").localeCompare(b.title || "")
-        );
+        formattedProducts.sort((a, b) => a.title?.localeCompare(b.title));
         break;
       case "title-descending":
-        formattedProducts.sort((a, b) =>
-          (b.title || "").localeCompare(a.title || "")
-        );
+        formattedProducts.sort((a, b) => b.title?.localeCompare(a.title));
         break;
       case "created-ascending":
-        formattedProducts.sort((a, b) =>
-          new Date(a.created_at) - new Date(b.created_at)
-        );
+        formattedProducts.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
         break;
       default:
-        formattedProducts.sort((a, b) =>
-          new Date(b.created_at) - new Date(a.created_at)
-        );
+        formattedProducts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     }
 
     /* ================= PAGINATION ================= */
@@ -225,15 +217,8 @@ export default async function handler(req, res) {
     const deliverySet = new Set();
 
     allProducts.forEach(p => {
-      if (p.vendor) {
-        const key = p.vendor;
-        vendorCounts[key] = (vendorCounts[key] || 0) + 1;
-      }
-
-      if (p.product_type) {
-        const key = p.product_type;
-        typeCounts[key] = (typeCounts[key] || 0) + 1;
-      }
+      if (p.vendor) vendorCounts[p.vendor] = (vendorCounts[p.vendor] || 0) + 1;
+      if (p.product_type) typeCounts[p.product_type] = (typeCounts[p.product_type] || 0) + 1;
 
       safeParse(p.color).forEach(c => {
         colorCounts[c] = (colorCounts[c] || 0) + 1;
@@ -241,13 +226,14 @@ export default async function handler(req, res) {
 
       safeParse(p.fabric).forEach(f => fabricSet.add(f));
 
-      safeParse(p.delivery_timeline).forEach(v => {
-        if (v) deliverySet.add(v.trim());
+      // ✅ CLEAN DELIVERY VALUES
+      const values = parseDelivery(p.delivery_timeline);
+      values.forEach(v => {
+        if (v && v.trim()) deliverySet.add(v.trim());
       });
 
       safeParse(p.variants).forEach(v => {
         if (!v.size) return;
-
         if (!sizeAvailability[v.size]) sizeAvailability[v.size] = false;
         if (v.inventory_quantity > 0) sizeAvailability[v.size] = true;
       });
@@ -257,27 +243,15 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       filters: {
-        vendors: Object.keys(vendorCounts).map(name => ({
-          name,
-          count: vendorCounts[name]
-        })),
-        productTypes: Object.keys(typeCounts).map(name => ({
-          name,
-          count: typeCounts[name]
-        })),
-        colors: Object.keys(colorCounts).map(name => ({
-          name,
-          count: colorCounts[name]
-        })),
-        sizes: Object.keys(sizeAvailability).map(name => ({
-          name,
-          available: sizeAvailability[name]
-        })),
+        vendors: Object.keys(vendorCounts).map(name => ({ name, count: vendorCounts[name] })),
+        productTypes: Object.keys(typeCounts).map(name => ({ name, count: typeCounts[name] })),
+        colors: Object.keys(colorCounts).map(name => ({ name, count: colorCounts[name] })),
+        sizes: Object.keys(sizeAvailability).map(name => ({ name, available: sizeAvailability[name] })),
         fabrics: [...fabricSet],
-        delivery_timeline: [...deliverySet].sort(), // ✅ FIXED KEY
+        delivery_time: [...deliverySet].sort(), // ✅ CLEAN
         priceRange: {
-          min: total ? Math.min(...formattedProducts.map(p => p.price)) : 0,
-          max: total ? Math.max(...formattedProducts.map(p => p.price)) : 0
+          min: Math.min(...formattedProducts.map(p => p.price)),
+          max: Math.max(...formattedProducts.map(p => p.price))
         }
       },
       products: paginatedProducts,
@@ -290,7 +264,6 @@ export default async function handler(req, res) {
 
   } catch (err) {
     console.error("API ERROR:", err);
-
     return res.status(500).json({
       error: err.message || "Server error"
     });
