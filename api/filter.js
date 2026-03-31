@@ -127,22 +127,31 @@ export default async function handler(req, res) {
     }
 
     // ✅ COLOR FILTER (FIXED)
-    if (color) {
-      const selected = Array.isArray(color) ? color : color.split(",");
+   if (color) {
+  const selected = Array.isArray(color) ? color : color.split(",");
 
-      products = products.filter(p => {
-        const productColors = safeParse(p.color);
-        const variantColors = safeParse(p.variants).map(v => v.color);
+  products = products.filter(p => {
 
-        const allColors = [...productColors, ...variantColors]
-          .filter(Boolean)
-          .map(c => c.toLowerCase().trim());
+    const variants = safeParse(p.variants);
 
-        return selected.some(sel =>
-          allColors.some(c => c.includes(sel.toLowerCase()))
-        );
-      });
-    }
+    const allColors = [
+      ...safeParse(p.color),
+
+      ...variants.map(v =>
+        v.color ||
+        v.option1 ||
+        v.option2 ||
+        (v.title ? v.title.split("/")[0] : null)
+      )
+    ]
+      .filter(Boolean)
+      .map(c => c.toLowerCase().trim());
+
+    return selected.some(sel =>
+      allColors.includes(sel.toLowerCase().trim())
+    );
+  });
+}
 
     // Delivery Timeline
     if (delivery_timeline) {
