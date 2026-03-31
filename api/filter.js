@@ -39,13 +39,26 @@ export default async function handler(req, res) {
 
     /* ================= FETCH ================= */
 
-    const { data: allProducts, error } = await supabase
-      .from("products")
-      .select("*")
-      .eq("status", "ACTIVE")
-      .eq("published", true)
-      // ✅ FIXED HERE
-      .ilike("collection_handle", `%${normalizedCollection}%`);
+    let { data: allProducts, error } = await supabase
+  .from("products")
+  .select("*")
+  .eq("status", "ACTIVE")
+  .eq("published", true)
+  .ilike("collection_handle", `%${normalizedCollection}%`);
+
+// 🔥 FALLBACK if empty
+if (!allProducts || allProducts.length === 0) {
+  console.warn("⚠️ No collection match, using fallback");
+
+  const fallback = await supabase
+    .from("products")
+    .select("*")
+    .eq("status", "ACTIVE")
+    .eq("published", true)
+    .limit(200);
+
+  allProducts = fallback.data || [];
+}
 
     if (error) {
       return res.status(500).json({ error: error.message });
