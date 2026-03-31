@@ -155,7 +155,7 @@ export default async function handler(req, res) {
       .map(d => String(d).toLowerCase().trim());
 
     return timelines.some(t =>
-      productDelivery.includes(t.toLowerCase().trim())
+      productDelivery.some(d => d === t.toLowerCase().trim())
     );
   });
 }
@@ -246,7 +246,8 @@ export default async function handler(req, res) {
       safeParse(p.fabric).forEach(f => fabricSet.add(f));
 
       // ✅ DELIVERY COLLECT
-     const deliveryValues = safeParse(p.delivery_timeline);
+     // ================= DELIVERY COLLECT =================
+const deliveryValues = safeParse(p.delivery_timeline);
 
 if (deliveryValues.length) {
   deliveryValues.forEach(d => {
@@ -256,6 +257,12 @@ if (deliveryValues.length) {
 } else {
   deliverySet.add("Standard Delivery");
 }
+
+// ================= FINAL ARRAY =================
+const delivery_timeline = [...deliverySet]
+  .map(d => String(d).trim())
+  .filter(Boolean)
+  .sort((a, b) => a.localeCompare(b));
 
       safeParse(p.variants).forEach(v => {
         if (!v.size) return;
@@ -269,7 +276,10 @@ if (deliveryValues.length) {
     const colors = Object.keys(colorCounts).map(name => ({ name, count: colorCounts[name] }));
     const sizes = Object.keys(sizeAvailability).map(name => ({ name, available: sizeAvailability[name] }));
     const fabrics = [...fabricSet];
-    const delivery_time = [...deliverySet]; // ✅ NEW
+   const delivery_timeline = [...deliverySet]
+  .map(d => String(d).trim())
+  .filter(Boolean)
+  .sort((a, b) => a.localeCompare(b)); // ✅ NEW
 
     const prices = formattedProducts.map(p => p.price);
     const min = prices.length ? Math.min(...prices) : 0;
@@ -284,7 +294,7 @@ if (deliveryValues.length) {
         colors,
         sizes,
         fabrics,
-        delivery_timeline, // ✅ NEW
+       delivery_timeline,
         priceRange: { min, max }
       },
       products: paginatedProducts,
