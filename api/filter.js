@@ -230,9 +230,31 @@ export default async function handler(req, res) {
       });
     });
 
-    const delivery_timeline_final = [...deliverySet]
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b));
+  const parseTimeline = (text) => {
+  const t = text.toLowerCase().trim();
+
+  // hours → highest priority
+  if (t.includes("hour")) {
+    const num = parseInt(t);
+    return num || 0; // 24h → 24, 72h → 72
+  }
+
+  // weeks
+  if (t.includes("week")) {
+    const match = t.match(/\d+/);
+    return match ? parseInt(match[0]) * 168 : 9999; // 1 week = 168h
+  }
+
+  // fallback
+  if (t.includes("standard")) return 99999;
+  if (t.includes("above")) return 99998;
+
+  return 99997;
+};
+
+const delivery_timeline_final = [...deliverySet]
+  .filter(Boolean)
+  .sort((a, b) => parseTimeline(a) - parseTimeline(b));
 
     /* ================= RESPONSE ================= */
 
