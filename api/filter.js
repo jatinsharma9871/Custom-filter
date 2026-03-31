@@ -41,14 +41,12 @@ export default async function handler(req, res) {
     /* ================= FETCH PRODUCTS ================= */
 
     const { data: allProducts, error } = await supabase
-  .from("products")
-  .select("*")
-  .eq("status", "ACTIVE")
-  .eq("published", true)
-  .or(`
-    collection_handle.cs.["${normalizedCollection}"],
-    collection_handle.eq.${normalizedCollection}
-  `);
+      .from("products")
+      .select("*")
+      .eq("status", "ACTIVE")
+      .eq("published", true)
+      .filter("collection_handle", "cs", `["${normalizedCollection}"]`);
+
     if (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -241,12 +239,12 @@ export default async function handler(req, res) {
       safeParse(p.fabric).forEach(f => fabricSet.add(f));
 
       // ✅ DELIVERY COLLECT
-     if (p.delivery_timeline && p.delivery_timeline.trim() !== "") {
+      if (p.delivery_timeline && p.delivery_timeline.trim() !== "") {
   deliverySet.add(p.delivery_timeline.trim());
-} else {
-  deliverySet.add("Standard Delivery"); // 🔥 TEMP FIX
 }
-
+if (!p.delivery_timeline) {
+  deliverySet.add("Standard Delivery");
+}
 
       safeParse(p.variants).forEach(v => {
         if (!v.size) return;
@@ -275,7 +273,7 @@ export default async function handler(req, res) {
         colors,
         sizes,
         fabrics,
-        delivery_timeline, // ✅ NEW
+        delivery_time, // ✅ NEW
         priceRange: { min, max }
       },
       products: paginatedProducts,
