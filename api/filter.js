@@ -256,7 +256,7 @@ if (!p.delivery_timeline) {
     const colors = Object.keys(colorCounts).map(name => ({ name, count: colorCounts[name] }));
     const sizes = Object.keys(sizeAvailability).map(name => ({ name, available: sizeAvailability[name] }));
     const fabrics = [...fabricSet];
-    const delivery_time = [...deliverySet]; // ✅ NEW
+    const delivery_timeline = [...deliverySet]; // ✅ NEW
 
     const prices = formattedProducts.map(p => p.price);
     const min = prices.length ? Math.min(...prices) : 0;
@@ -271,7 +271,7 @@ if (!p.delivery_timeline) {
         colors,
         sizes,
         fabrics,
-        delivery_time, // ✅ NEW
+        delivery_timeline, // ✅ NEW
         priceRange: { min, max }
       },
       products: paginatedProducts,
