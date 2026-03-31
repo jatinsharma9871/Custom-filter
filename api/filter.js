@@ -207,7 +207,10 @@ export default async function handler(req, res) {
     allProducts.forEach(p => {
       // vendor
       if (p.vendor) {
-        const v = String(p.vendor).trim();
+       const v = String(p.vendor)
+  .replace(/&/g, "and")
+  .replace(/\s+/g, " ")
+  .trim();
         vendorCounts[v] = (vendorCounts[v] || 0) + 1;
       }
 
