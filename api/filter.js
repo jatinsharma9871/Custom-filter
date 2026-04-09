@@ -43,7 +43,6 @@ export default async function handler(req, res) {
       .eq("status", "ACTIVE")
       .eq("published", true);
 
-    // ✅ Skip collection filter for /collections/all
     if (normalizedCollection && normalizedCollection !== "all") {
       query = query.filter(
         "collection_handle",
@@ -84,9 +83,15 @@ export default async function handler(req, res) {
       }
     };
 
-    const normalize = (v) => String(v || "").trim().toLowerCase();
+    const normalize = (v) =>
+      String(v || "").trim().toLowerCase();
 
-    /* ================= FILTER ================= */
+    const sortAlpha = (arr) =>
+      arr.sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: "base" })
+      );
+
+    /* ================= FILTER PRODUCTS ================= */
 
     let products = allProducts.filter(p => {
       if (p.inventory_quantity > 0) return true;
@@ -100,7 +105,9 @@ export default async function handler(req, res) {
 
     // vendor
     if (vendor) {
-      const list = Array.isArray(vendor) ? vendor : vendor.split(",");
+      const list = Array.isArray(vendor)
+        ? vendor
+        : vendor.split(",");
 
       products = products.filter(p =>
         list.some(v =>
@@ -124,7 +131,9 @@ export default async function handler(req, res) {
 
     // fabric
     if (fabric) {
-      const list = Array.isArray(fabric) ? fabric : fabric.split(",");
+      const list = Array.isArray(fabric)
+        ? fabric
+        : fabric.split(",");
 
       products = products.filter(p => {
         const pf = safeParse(p.fabric).map(normalize);
@@ -137,8 +146,11 @@ export default async function handler(req, res) {
       products = products.filter(p => {
         const price = Number(p.price || 0);
 
-        if (minPrice && price < Number(minPrice)) return false;
-        if (maxPrice && price > Number(maxPrice)) return false;
+        if (minPrice && price < Number(minPrice))
+          return false;
+
+        if (maxPrice && price > Number(maxPrice))
+          return false;
 
         return true;
       });
@@ -146,7 +158,9 @@ export default async function handler(req, res) {
 
     // color
     if (color) {
-      const list = Array.isArray(color) ? color : color.split(",");
+      const list = Array.isArray(color)
+        ? color
+        : color.split(",");
 
       products = products.filter(p => {
         const pc = safeParse(p.color).map(normalize);
@@ -185,23 +199,41 @@ export default async function handler(req, res) {
 
     if (!sort_by) {
       formattedProducts.sort(
-        (a, b) => new Date(b.created_at) - new Date(a.created_at)
+        (a, b) =>
+          new Date(b.created_at) -
+          new Date(a.created_at)
       );
     } else {
 
       const sortMap = {
-        "manual": (a, b) => (a.position || 0) - (b.position || 0),
-        "price-ascending": (a, b) => a.price - b.price,
-        "price-descending": (a, b) => b.price - a.price,
-        "title-ascending": (a, b) => a.title?.localeCompare(b.title),
-        "title-descending": (a, b) => b.title?.localeCompare(a.title),
+        manual: (a, b) =>
+          (a.position || 0) -
+          (b.position || 0),
+
+        "price-ascending": (a, b) =>
+          a.price - b.price,
+
+        "price-descending": (a, b) =>
+          b.price - a.price,
+
+        "title-ascending": (a, b) =>
+          a.title?.localeCompare(b.title),
+
+        "title-descending": (a, b) =>
+          b.title?.localeCompare(a.title),
+
         "created-descending": (a, b) =>
-          new Date(b.created_at) - new Date(a.created_at),
+          new Date(b.created_at) -
+          new Date(a.created_at),
+
         "created-ascending": (a, b) =>
-          new Date(a.created_at) - new Date(b.created_at)
+          new Date(a.created_at) -
+          new Date(b.created_at)
       };
 
-      formattedProducts.sort(sortMap[sort_by] || (() => 0));
+      formattedProducts.sort(
+        sortMap[sort_by] || (() => 0)
+      );
     }
 
     /* ================= PAGINATION ================= */
@@ -210,12 +242,16 @@ export default async function handler(req, res) {
     const limit = 12;
 
     const total = formattedProducts.length;
-    const totalPages = Math.max(1, Math.ceil(total / limit));
-
-    const paginatedProducts = formattedProducts.slice(
-      (currentPage - 1) * limit,
-      currentPage * limit
+    const totalPages = Math.max(
+      1,
+      Math.ceil(total / limit)
     );
+
+    const paginatedProducts =
+      formattedProducts.slice(
+        (currentPage - 1) * limit,
+        currentPage * limit
+      );
 
     /* ================= FILTER BUILD ================= */
 
@@ -228,12 +264,23 @@ export default async function handler(req, res) {
 
     allProducts.forEach(p => {
 
-      if (p.vendor) vendorSet.add(p.vendor);
-      if (p.product_type) typeSet.add(p.product_type);
+      if (p.vendor)
+        vendorSet.add(String(p.vendor).trim());
 
-      safeParse(p.color).forEach(c => colorSet.add(c));
-      safeParse(p.fabric).forEach(f => fabricSet.add(f));
-      safeParse(p.delivery_timeline).forEach(d => deliverySet.add(d));
+      if (p.product_type)
+        typeSet.add(String(p.product_type).trim());
+
+      safeParse(p.color).forEach(c => {
+        if (c) colorSet.add(String(c).trim());
+      });
+
+      safeParse(p.fabric).forEach(f => {
+        if (f) fabricSet.add(String(f).trim());
+      });
+
+      safeParse(p.delivery_timeline).forEach(d => {
+        if (d) deliverySet.add(String(d).trim());
+      });
 
       safeParse(p.variants).forEach(v => {
         if (!v.size) return;
@@ -244,23 +291,64 @@ export default async function handler(req, res) {
         if (v.inventory_quantity > 0)
           sizeAvailability[v.size] = true;
       });
+
     });
+
+    const vendors = [...vendorSet];
+    const productTypes = [...typeSet];
+    const colors = [...colorSet];
+    const fabrics = [...fabricSet];
+    const delivery = [...deliverySet];
+    const sizes = Object.keys(sizeAvailability);
 
     return res.status(200).json({
 
       filters: {
-        vendors: [...vendorSet].map(v => ({ name: v })),
-        productTypes: [...typeSet].map(v => ({ name: v })),
-        colors: [...colorSet].map(v => ({ name: v })),
-        fabrics: [...fabricSet],
-        delivery_timeline: [...deliverySet],
-        sizes: Object.keys(sizeAvailability).map(s => ({
-          name: s,
-          available: sizeAvailability[s]
-        })),
+
+        vendors:
+          vendors.length > 1
+            ? sortAlpha(vendors).map(v => ({ name: v }))
+            : [],
+
+        productTypes:
+          productTypes.length > 1
+            ? sortAlpha(productTypes).map(v => ({ name: v }))
+            : [],
+
+        colors:
+          colors.length > 1
+            ? sortAlpha(colors).map(v => ({ name: v }))
+            : [],
+
+        fabrics:
+          fabrics.length > 1
+            ? sortAlpha(fabrics)
+            : [],
+
+        delivery_timeline:
+          delivery.length > 1
+            ? sortAlpha(delivery)
+            : [],
+
+        sizes:
+          sizes.length > 1
+            ? sortAlpha(sizes).map(s => ({
+                name: s,
+                available: sizeAvailability[s]
+              }))
+            : [],
+
         priceRange: {
-          min: Math.min(...formattedProducts.map(p => p.price || 0)),
-          max: Math.max(...formattedProducts.map(p => p.price || 0))
+          min: Math.min(
+            ...formattedProducts.map(
+              p => p.price || 0
+            )
+          ),
+          max: Math.max(
+            ...formattedProducts.map(
+              p => p.price || 0
+            )
+          )
         }
       },
 
