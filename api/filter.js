@@ -93,15 +93,16 @@ export default async function handler(req, res) {
 
     /* ================= FILTER PRODUCTS ================= */
 
-    let products = allProducts.filter(p => {
-      if (p.inventory_quantity > 0) return true;
+    let products = [...allProducts];
+    products = products.filter(p => {
+  if (p.inventory_quantity > 0) return true;
 
-      const variants = safeParse(p.variants);
+  const variants = safeParse(p.variants);
 
-      return variants.some(
-        v => v.inventory_quantity > 0 || v.available === true
-      );
-    });
+  return variants.some(
+    v => v.inventory_quantity > 0 || v.available === true
+  );
+});
 
     // vendor
     if (vendor) {
