@@ -94,6 +94,7 @@ export default async function handler(req, res) {
     /* ================= FILTER PRODUCTS ================= */
 
     let products = [...allProducts];
+    let filterSource = [...allProducts];
 
     // vendor
     if (vendor) {
@@ -138,11 +139,8 @@ export default async function handler(req, res) {
       products = products.filter(p => {
         const price = Number(p.price || 0);
 
-        if (minPrice && price < Number(minPrice))
-          return false;
-
-        if (maxPrice && price > Number(maxPrice))
-          return false;
+        if (minPrice && price < Number(minPrice)) return false;
+        if (maxPrice && price > Number(maxPrice)) return false;
 
         return true;
       });
@@ -177,7 +175,10 @@ export default async function handler(req, res) {
       });
     }
 
-    /* ================= INVENTORY FILTER (LAST) ================= */
+    // build filters BEFORE inventory
+    filterSource = [...products];
+
+    /* ================= INVENTORY FILTER LAST ================= */
 
     products = products.filter(p => {
       if (p.inventory_quantity > 0) return true;
@@ -210,34 +211,18 @@ export default async function handler(req, res) {
     } else {
 
       const sortMap = {
-        manual: (a, b) =>
-          (a.position || 0) -
-          (b.position || 0),
-
-        "price-ascending": (a, b) =>
-          a.price - b.price,
-
-        "price-descending": (a, b) =>
-          b.price - a.price,
-
-        "title-ascending": (a, b) =>
-          a.title?.localeCompare(b.title),
-
-        "title-descending": (a, b) =>
-          b.title?.localeCompare(a.title),
-
+        manual: (a, b) => (a.position || 0) - (b.position || 0),
+        "price-ascending": (a, b) => a.price - b.price,
+        "price-descending": (a, b) => b.price - a.price,
+        "title-ascending": (a, b) => a.title?.localeCompare(b.title),
+        "title-descending": (a, b) => b.title?.localeCompare(a.title),
         "created-descending": (a, b) =>
-          new Date(b.created_at) -
-          new Date(a.created_at),
-
+          new Date(b.created_at) - new Date(a.created_at),
         "created-ascending": (a, b) =>
-          new Date(a.created_at) -
-          new Date(b.created_at)
+          new Date(a.created_at) - new Date(b.created_at)
       };
 
-      formattedProducts.sort(
-        sortMap[sort_by] || (() => 0)
-      );
+      formattedProducts.sort(sortMap[sort_by] || (() => 0));
     }
 
     /* ================= PAGINATION ================= */
@@ -246,10 +231,7 @@ export default async function handler(req, res) {
     const limit = 12;
 
     const total = formattedProducts.length;
-    const totalPages = Math.max(
-      1,
-      Math.ceil(total / limit)
-    );
+    const totalPages = Math.max(1, Math.ceil(total / limit));
 
     const paginatedProducts =
       formattedProducts.slice(
@@ -266,7 +248,7 @@ export default async function handler(req, res) {
     const fabricSet = new Set();
     const deliverySet = new Set();
 
-    allProducts.forEach(p => {
+    filterSource.forEach(p => {
 
       if (p.vendor)
         vendorSet.add(String(p.vendor).trim());
@@ -343,12 +325,8 @@ export default async function handler(req, res) {
             : [],
 
         priceRange: {
-          min: Math.min(
-            ...formattedProducts.map(p => p.price || 0)
-          ),
-          max: Math.max(
-            ...formattedProducts.map(p => p.price || 0)
-          )
+          min: Math.min(...formattedProducts.map(p => p.price || 0)),
+          max: Math.max(...formattedProducts.map(p => p.price || 0))
         }
       },
 
