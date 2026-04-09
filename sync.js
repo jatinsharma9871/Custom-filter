@@ -253,27 +253,33 @@ const deliveryTimeline = metafields.find(
   m => m.node.namespace === "custom" && m.node.key === "delivery_time"
 )?.node.value || null;
 
-    return {
-      id: productId,
-      title: node.title,
-      handle: node.handle,
-      vendor: node.vendor,
-      product_type: node.productType,
-      collection_handle: p.collections.map(c => c.handle),
+return {
+  id: productId,
+  title: node.title,
+  handle: node.handle,
+  vendor: node.vendor,
+  product_type: node.productType,
+  collection_handle: p.collections.map(c => c.handle),
 
-      position,
-      best_selling_rank: bestSellingMap[productId] ?? 9999, // ✅ FIXED
+  position,
+  best_selling_rank: bestSellingMap[productId] ?? 9999,
 
-      price,
-      image: node.images.edges[0]?.node.url || null,
+  price,
 
-      inventory_quantity: inventory,
-      status: node.status,
-      published: node.status === "ACTIVE",
- delivery_timeline: deliveryTimeline,
-      created_at: node.createdAt,
-      published_at: node.publishedAt
-    };
+  // ✅ images for hover + swipe
+  images: node.images.edges.map(i => i.node.url),
+  image: node.images.edges[0]?.node.url || null,
+  image2: node.images.edges[1]?.node.url || null,
+
+  inventory_quantity: inventory,
+  status: node.status,
+  published: node.status === "ACTIVE",
+
+  delivery_timeline: deliveryTimeline,
+
+  created_at: node.createdAt,
+  published_at: node.publishedAt
+};
   });
 
   console.log("✅ Processed:", finalProducts.length);
