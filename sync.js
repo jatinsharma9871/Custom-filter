@@ -4,7 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 /* ================= CONFIG ================= */
 
 const SHOP = "the-sverve.myshopify.com";
-const TOKEN = "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";
+const TOKEN = "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";
 
 const supabase = createClient(
   "https://rflabvnooobawvhxkuoi.supabase.co",
