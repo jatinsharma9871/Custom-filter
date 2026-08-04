@@ -67,6 +67,18 @@ export default async function handler(req, res) {
       variant &&
       (Number(variant.inventory_quantity) > 0 || variant.available === true);
 
+    // A product with variants is in stock only if at least one variant is in stock.
+    // A product without variants uses its own inventory quantity.
+    const productIsInStock = (product) => {
+      const variants = safeParse(product.variants);
+
+      if (variants.length) {
+        return variants.some(variantIsAvailable);
+      }
+
+      return Number(product.inventory_quantity) > 0;
+    };
+
     /* ================= FETCH PRODUCTS ================= */
 
     let query = supabase
@@ -171,7 +183,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // Size — added
+    // Size
     if (size) {
       const selectedSizes = toList(size).map(normalize);
 
@@ -199,16 +211,12 @@ export default async function handler(req, res) {
       });
     }
 
-    // Build filter options after selected filters, before inventory filtering.
+    /* ================= HIDE OUT-OF-STOCK PRODUCTS ================= */
+
+    products = products.filter(productIsInStock);
+
+    // Filter choices now also contain only in-stock products.
     const filterSource = [...products];
-
-    /* ================= INVENTORY FILTER ================= */
-
-    products = products.filter((product) => {
-      if (Number(product.inventory_quantity) > 0) return true;
-
-      return safeParse(product.variants).some(variantIsAvailable);
-    });
 
     /* ================= FORMAT PRODUCTS ================= */
 
@@ -259,7 +267,7 @@ export default async function handler(req, res) {
       currentPage * limit
     );
 
-    /* ================= BUILD FILTER OPTIONS ================= */
+    /* ================= BUILD FILTERS ================= */
 
     const vendorSet = new Set();
     const typeSet = new Set();
@@ -310,8 +318,7 @@ export default async function handler(req, res) {
     const fabrics = [...fabricSet];
     const delivery = [...deliverySet];
     const sizes = Object.keys(sizeAvailability);
-
-    const productPrices = formattedProducts.map((product) => product.price);
+    const prices = formattedProducts.map((product) => product.price);
 
     return res.status(200).json({
       filters: {
@@ -343,8 +350,8 @@ export default async function handler(req, res) {
             : [],
 
         priceRange: {
-          min: productPrices.length ? Math.min(...productPrices) : 0,
-          max: productPrices.length ? Math.max(...productPrices) : 0
+          min: prices.length ? Math.min(...prices) : 0,
+          max: prices.length ? Math.max(...prices) : 0
         }
       },
 
