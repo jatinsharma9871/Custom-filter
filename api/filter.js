@@ -63,9 +63,8 @@ export default async function handler(req, res) {
         a.localeCompare(b, undefined, { sensitivity: "base" })
       );
 
-    const variantIsAvailable = (variant) =>
-      variant &&
-      (Number(variant.inventory_quantity) > 0 || variant.available === true);
+   const variantIsAvailable = (variant) =>
+  Number(variant?.inventory_quantity || 0) > 0;
 
     // A product with variants is in stock only if at least one variant is in stock.
     // A product without variants uses its own inventory quantity.
