@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { createClient } from "@supabase/supabase-js";
 
 /* =========================================================
@@ -9,6 +10,12 @@ export const config = {
 };
 
 const API_VERSION = "2026-07";
+
+const PRODUCT_PAGE_SIZE = 100;
+const VARIANT_PAGE_SIZE = 100;
+const METAFIELD_PAGE_SIZE = 50;
+const REFERENCE_PAGE_SIZE = 100;
+const SUPABASE_BATCH_SIZE = 250;
 
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
@@ -39,16 +46,19 @@ function logSyncStatus(status, details = {}) {
 function requiredEnv(name) {
   const value = process.env[name];
 
-  if (!value) {
+  if (!value || !String(value).trim()) {
     throw new Error(
       `Missing required environment variable: ${name}`
     );
   }
 
-  return value;
+  return String(value).trim();
 }
 
-function validateEnvironment({ requireCronSecret = false } = {}) {
+
+function validateEnvironment({
+  requireCronSecret = false
+} = {}) {
   requiredEnv("SHOPIFY_SHOP");
   requiredEnv("SHOPIFY_CLIENT_ID");
   requiredEnv("SHOPIFY_CLIENT_SECRET");
@@ -62,24 +72,37 @@ function validateEnvironment({ requireCronSecret = false } = {}) {
 
 
 /* =========================================================
-   ENV VALUES
-========================================================= */
-
-const SHOP = process.env.SHOPIFY_SHOP;
-
-const CLIENT_ID = process.env.SHOPIFY_CLIENT_ID;
-
-const CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
-
-
-/* =========================================================
    SUPABASE
 ========================================================= */
 
-const supabase = createClient(
-  process.env.SUPABASE_URL || "",
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ""
-);
+let supabaseClient = null;
+
+
+function getSupabase() {
+  if (supabaseClient) {
+    return supabaseClient;
+  }
+
+  const url =
+    requiredEnv("SUPABASE_URL");
+
+  const key =
+    requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
+
+  supabaseClient =
+    createClient(
+      url,
+      key,
+      {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false
+        }
+      }
+    );
+
+  return supabaseClient;
+}
 
 
 /* =========================================================
@@ -89,21 +112,27 @@ const supabase = createClient(
 let inMemoryToken = null;
 
 
-/* =========================================================
-   CHECK TOKEN
-========================================================= */
-
 function tokenIsUsable(token) {
-  if (!token?.access_token || !token?.expires_at) {
+  if (
+    !token?.access_token ||
+    !token?.expires_at
+  ) {
     return false;
   }
 
-  const expiryTime =
-    new Date(token.expires_at).getTime();
+  const expiry =
+    new Date(
+      token.expires_at
+    ).getTime();
+
+  if (!Number.isFinite(expiry)) {
+    return false;
+  }
 
   return (
-    expiryTime >
-    Date.now() + TOKEN_REFRESH_BUFFER_MS
+    expiry >
+    Date.now() +
+      TOKEN_REFRESH_BUFFER_MS
   );
 }
 
@@ -113,64 +142,103 @@ function tokenIsUsable(token) {
 ========================================================= */
 
 async function requestNewAccessToken() {
-  logSyncStatus("REFRESHING_ACCESS_TOKEN");
+  logSyncStatus(
+    "REFRESHING_ACCESS_TOKEN"
+  );
 
-  const shop = requiredEnv("SHOPIFY_SHOP");
-  const clientId = requiredEnv("SHOPIFY_CLIENT_ID");
+  const shop =
+    requiredEnv("SHOPIFY_SHOP");
+
+  const clientId =
+    requiredEnv("SHOPIFY_CLIENT_ID");
+
   const clientSecret =
     requiredEnv("SHOPIFY_CLIENT_SECRET");
 
-  const response = await fetch(
-    `https://${shop}/admin/oauth/access_token`,
-    {
-      method: "POST",
+  const response =
+    await fetch(
+      `https://${shop}/admin/oauth/access_token`,
+      {
+        method: "POST",
 
-      headers: {
-        "Content-Type":
-          "application/x-www-form-urlencoded"
-      },
+        headers: {
+          "Content-Type":
+            "application/x-www-form-urlencoded"
+        },
 
-      body: new URLSearchParams({
-        grant_type: "client_credentials",
-        client_id: clientId,
-        client_secret: clientSecret
-      })
-    }
-  );
+        body:
+          new URLSearchParams({
+            grant_type:
+              "client_credentials",
+
+            client_id:
+              clientId,
+
+            client_secret:
+              clientSecret
+          })
+      }
+    );
 
   const payload =
-    await response.json().catch(() => ({}));
+    await response
+      .json()
+      .catch(() => ({}));
 
-  if (!response.ok || !payload.access_token) {
+  if (
+    !response.ok ||
+    !payload.access_token
+  ) {
     throw new Error(
       `Shopify token request failed: ${
         payload.error_description ||
         payload.error ||
+        JSON.stringify(payload) ||
         response.status
       }`
     );
   }
 
   const expiresIn =
-    Number(payload.expires_in || 86399);
+    Number(
+      payload.expires_in ||
+      86399
+    );
 
   const expiresAt =
     new Date(
-      Date.now() + expiresIn * 1000
+      Date.now() +
+        expiresIn * 1000
     ).toISOString();
 
   const token = {
     shop,
-    access_token: payload.access_token,
-    expires_at: expiresAt,
-    updated_at: new Date().toISOString()
+
+    access_token:
+      payload.access_token,
+
+    expires_at:
+      expiresAt,
+
+    updated_at:
+      new Date().toISOString()
   };
 
-  const { error } = await supabase
-    .from("shopify_access_tokens")
-    .upsert(token, {
-      onConflict: "shop"
-    });
+  const supabase =
+    getSupabase();
+
+  const { error } =
+    await supabase
+      .from(
+        "shopify_access_tokens"
+      )
+      .upsert(
+        token,
+        {
+          onConflict:
+            "shop"
+        }
+      );
 
   if (error) {
     throw new Error(
@@ -178,7 +246,8 @@ async function requestNewAccessToken() {
     );
   }
 
-  inMemoryToken = token;
+  inMemoryToken =
+    token;
 
   logSyncStatus(
     "ACCESS_TOKEN_REFRESHED",
@@ -195,35 +264,43 @@ async function requestNewAccessToken() {
    GET SHOPIFY ACCESS TOKEN
 ========================================================= */
 
-async function getShopifyAccessToken(
-  { forceRefresh = false } = {}
-) {
-  const shop = requiredEnv("SHOPIFY_SHOP");
-
-  /*
-   * First check memory cache.
-   */
+async function getShopifyAccessToken({
+  forceRefresh = false
+} = {}) {
+  const shop =
+    requiredEnv("SHOPIFY_SHOP");
 
   if (
     !forceRefresh &&
-    tokenIsUsable(inMemoryToken)
+    tokenIsUsable(
+      inMemoryToken
+    )
   ) {
-    return inMemoryToken.access_token;
+    return (
+      inMemoryToken
+        .access_token
+    );
   }
 
-
-  /*
-   * Then check Supabase cache.
-   */
-
   if (!forceRefresh) {
-    const { data, error } =
+    const supabase =
+      getSupabase();
+
+    const {
+      data,
+      error
+    } =
       await supabase
-        .from("shopify_access_tokens")
+        .from(
+          "shopify_access_tokens"
+        )
         .select(
           "shop, access_token, expires_at"
         )
-        .eq("shop", shop)
+        .eq(
+          "shop",
+          shop
+        )
         .maybeSingle();
 
     if (error) {
@@ -232,21 +309,21 @@ async function getShopifyAccessToken(
       );
     }
 
-    if (tokenIsUsable(data)) {
-      inMemoryToken = data;
+    if (
+      tokenIsUsable(data)
+    ) {
+      inMemoryToken =
+        data;
 
       logSyncStatus(
         "USING_CACHED_ACCESS_TOKEN"
       );
 
-      return data.access_token;
+      return (
+        data.access_token
+      );
     }
   }
-
-
-  /*
-   * Token missing/expired.
-   */
 
   return requestNewAccessToken();
 }
@@ -258,43 +335,39 @@ async function getShopifyAccessToken(
 
 async function shopifyRequest(
   url,
-  options = {},
-  retryAfterRefresh = true
+  options = {}
 ) {
-  const send = async (forceRefresh) => {
-    const token =
-      await getShopifyAccessToken({
-        forceRefresh
-      });
+  const send =
+    async (
+      forceRefresh
+    ) => {
 
-    return fetch(url, {
-      ...options,
+      const token =
+        await getShopifyAccessToken({
+          forceRefresh
+        });
 
-      headers: {
-        ...options.headers,
-        "X-Shopify-Access-Token":
-          token
-      }
-    });
-  };
+      return fetch(
+        url,
+        {
+          ...options,
 
+          headers: {
+            ...(options.headers ||
+              {}),
 
-  /*
-   * First attempt
-   */
+            "X-Shopify-Access-Token":
+              token
+          }
+        }
+      );
+    };
 
   let response =
     await send(false);
 
-
-  /*
-   * If Shopify says unauthorized,
-   * refresh token once.
-   */
-
   if (
-    response.status === 401 &&
-    retryAfterRefresh
+    response.status === 401
   ) {
     logSyncStatus(
       "SHOPIFY_401_REFRESHING_TOKEN"
@@ -309,289 +382,482 @@ async function shopifyRequest(
 
 
 /* =========================================================
-   SHOPIFY GRAPHQL
+   GRAPHQL
 ========================================================= */
 
-async function shopifyGraphQL(query) {
-  const shop =
-    requiredEnv("SHOPIFY_SHOP");
-
-  const response =
-    await shopifyRequest(
-      `https://${shop}/admin/api/${API_VERSION}/graphql.json`,
-      {
-        method: "POST",
-
-        headers: {
-          "Content-Type":
-            "application/json"
-        },
-
-        body: JSON.stringify({
-          query
-        })
-      }
-    );
-
-  const payload =
-    await response.json().catch(() => ({}));
-
-  if (
-    !response.ok ||
-    payload.errors
-  ) {
-    throw new Error(
-      `Shopify GraphQL request failed: ${JSON.stringify(
-        payload.errors ||
-        payload
-      )}`
-    );
-  }
-
-  return payload.data;
-}
-
-
-/* =========================================================
-   SHOPIFY REST GET
-========================================================= */
-
-async function shopifyRestGet(url) {
-  const response =
-    await shopifyRequest(
-      url,
-      {
-        headers: {
-          Accept: "application/json"
-        }
-      }
-    );
-
-  const payload =
-    await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(
-      `Shopify REST request failed: ${
-        typeof payload.errors === "string"
-          ? payload.errors
-          : JSON.stringify(
-              payload.errors || payload
-            )
-      }`
-    );
-  }
-
-  return {
-    payload,
-    link:
-      response.headers.get("link")
-  };
-}
-
-
-/* =========================================================
-   FETCH COLLECTION POSITIONS
-========================================================= */
-
-async function fetchAllCollects(
-  collectionIds
+async function shopifyGraphQL(
+  query,
+  variables = {}
 ) {
   const shop =
     requiredEnv("SHOPIFY_SHOP");
 
-  const result = {};
+  let attempt = 0;
 
-  let collectionNumber = 0;
+  while (attempt < 5) {
+    attempt++;
 
-  for (
-    const collectionId
-    of collectionIds
-  ) {
-    collectionNumber++;
+    const response =
+      await shopifyRequest(
+        `https://${shop}/admin/api/${API_VERSION}/graphql.json`,
+        {
+          method: "POST",
 
-    result[collectionId] = {};
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
 
-    logSyncStatus(
-      "FETCHING_COLLECTION_POSITIONS",
-      {
-        collection:
-          collectionNumber,
-        totalCollections:
-          collectionIds.length,
-        collectionId
-      }
-    );
+          body:
+            JSON.stringify({
+              query,
+              variables
+            })
+        }
+      );
 
-    let url =
-      `https://${shop}/admin/api/${API_VERSION}/collects.json` +
-      `?collection_id=${collectionId}&limit=250`;
+    const payload =
+      await response
+        .json()
+        .catch(() => ({}));
 
-    while (url) {
-      const {
-        payload,
-        link
-      } =
-        await shopifyRestGet(url);
+    if (
+      response.status === 429
+    ) {
+      const wait =
+        attempt * 2000;
 
-      for (
-        const collect
-        of payload.collects || []
-      ) {
-        result[collectionId][
-          collect.product_id
-        ] =
-          collect.position;
-      }
+      logSyncStatus(
+        "SHOPIFY_THROTTLED",
+        {
+          attempt,
+          wait
+        }
+      );
 
-      url =
-        link?.match(
-          /<([^>]+)>; rel="next"/
-        )?.[1] || null;
+      await sleep(wait);
+
+      continue;
     }
 
-    await sleep(150);
+    if (!response.ok) {
+      throw new Error(
+        `Shopify GraphQL HTTP ${response.status}: ${JSON.stringify(
+          payload
+        )}`
+      );
+    }
+
+    if (
+      payload.errors
+    ) {
+      const throttled =
+        payload.errors.some(
+          (error) =>
+            error?.extensions
+              ?.code ===
+            "THROTTLED"
+        );
+
+      if (
+        throttled &&
+        attempt < 5
+      ) {
+        await sleep(
+          attempt * 2000
+        );
+
+        continue;
+      }
+
+      throw new Error(
+        `Shopify GraphQL request failed: ${JSON.stringify(
+          payload.errors
+        )}`
+      );
+    }
+
+    const cost =
+      payload.extensions
+        ?.cost;
+
+    const throttle =
+      cost
+        ?.throttleStatus;
+
+    if (cost) {
+      logSyncStatus(
+        "SHOPIFY_API_COST",
+        {
+          requested:
+            cost.requestedQueryCost,
+
+          actual:
+            cost.actualQueryCost,
+
+          available:
+            throttle
+              ?.currentlyAvailable
+        }
+      );
+    }
+
+    if (
+      throttle &&
+      throttle.currentlyAvailable <
+        200
+    ) {
+      await sleep(500);
+    }
+
+    return payload.data;
   }
 
-  return result;
+  throw new Error(
+    "Shopify GraphQL request failed after retries."
+  );
 }
 
 
 /* =========================================================
-   FETCH BEST SELLING RANK
+   BASIC PRODUCT QUERY
+
+   Keep this query relatively small.
 ========================================================= */
 
-async function fetchBestSelling() {
-  const collectionId =
-    process.env
-      .SHOPIFY_BEST_SELLING_COLLECTION_ID;
+const PRODUCTS_QUERY = `
+query Products(
+  $first: Int!,
+  $after: String
+) {
+  products(
+    first: $first,
+    after: $after
+  ) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
 
-  if (!collectionId) {
-    logSyncStatus(
-      "BEST_SELLING_COLLECTION_NOT_SET"
-    );
+    edges {
+      node {
+        id
+        title
+        handle
+        vendor
+        productType
+        status
+        createdAt
+        publishedAt
 
-    return {};
+        deliveryTime: metafield(
+          namespace: "custom",
+          key: "delivery_time"
+        ) {
+          value
+        }
+
+        collections(first: 100) {
+          edges {
+            node {
+              id
+              handle
+            }
+          }
+        }
+
+        images(first: 2) {
+          edges {
+            node {
+              url
+            }
+          }
+        }
+
+        variants(first: 100) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+
+          edges {
+            node {
+              id
+              price
+              inventoryQuantity
+
+              selectedOptions {
+                name
+                value
+              }
+            }
+          }
+        }
+      }
+    }
   }
+}
+`;
 
-  const ranks = {};
+
+/* =========================================================
+   FETCH PRODUCTS
+========================================================= */
+
+async function fetchAllProducts() {
+  const products = [];
+
+  const collectionIds =
+    new Set();
 
   let cursor = null;
 
   let hasNextPage = true;
 
-  let rank = 1;
-
   let page = 0;
+
+  logSyncStatus(
+    "FETCHING_PRODUCTS"
+  );
 
   while (hasNextPage) {
     page++;
 
     const data =
-      await shopifyGraphQL(`
+      await shopifyGraphQL(
+        PRODUCTS_QUERY,
         {
-          collection(
-            id: "${collectionId}"
-          ) {
-            products(
-              first: 250,
-              sortKey: BEST_SELLING
-              ${
-                cursor
-                  ? `, after: "${cursor}"`
-                  : ""
-              }
-            ) {
-              pageInfo {
-                hasNextPage
-                endCursor
-              }
+          first:
+            PRODUCT_PAGE_SIZE,
 
-              edges {
-                node {
-                  id
-                }
-              }
-            }
-          }
+          after:
+            cursor
         }
-      `);
+      );
 
-    const products =
-      data.collection?.products;
+    const connection =
+      data?.products;
 
-    if (!products) {
-      break;
+    if (!connection) {
+      throw new Error(
+        "Shopify products response is missing."
+      );
     }
 
     for (
       const edge
-      of products.edges
+      of connection.edges
     ) {
-      const productId =
-        edge.node.id
-          .split("/")
-          .pop();
+      const node =
+        edge.node;
 
-      ranks[productId] =
-        rank++;
+      const collections =
+        (
+          node.collections
+            ?.edges ||
+          []
+        ).map(
+          ({
+            node:
+              collection
+          }) => {
+
+            const id =
+              collection.id
+                .split("/")
+                .pop();
+
+            collectionIds.add(
+              id
+            );
+
+            return {
+              id,
+
+              gid:
+                collection.id,
+
+              handle:
+                collection.handle
+            };
+          }
+        );
+
+      products.push({
+        node,
+        collections,
+        metaobjectColors: []
+      });
     }
 
     logSyncStatus(
-      "BEST_SELLING_PAGE_FETCHED",
+      "PRODUCT_PAGE_FETCHED",
       {
         page,
-        products:
-          products.edges.length
+
+        productsOnPage:
+          connection.edges.length,
+
+        totalProductsFetched:
+          products.length
       }
     );
 
     hasNextPage =
-      products.pageInfo.hasNextPage;
+      Boolean(
+        connection.pageInfo
+          .hasNextPage
+      );
 
     cursor =
-      products.pageInfo.endCursor;
+      connection.pageInfo
+        .endCursor;
 
     await sleep(150);
   }
 
-  return ranks;
+  return {
+    products,
+
+    collectionIds:
+      [...collectionIds]
+  };
 }
 
 
 /* =========================================================
-   OPTION VALUE
+   FETCH REMAINING VARIANTS
 ========================================================= */
 
-function optionValue(
-  selectedOptions,
-  names
+const PRODUCT_VARIANTS_QUERY = `
+query ProductVariants(
+  $id: ID!,
+  $first: Int!,
+  $after: String
 ) {
-  const option =
-    selectedOptions.find(
-      (item) =>
-        names.includes(
-          String(
-            item.name || ""
-          )
-            .trim()
-            .toLowerCase()
-        )
-    );
+  product(id: $id) {
+    variants(
+      first: $first,
+      after: $after
+    ) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
 
-  return option?.value || null;
+      edges {
+        node {
+          id
+          price
+          inventoryQuantity
+
+          selectedOptions {
+            name
+            value
+          }
+        }
+      }
+    }
+  }
+}
+`;
+
+
+async function fetchRemainingVariants(
+  product
+) {
+  const initialConnection =
+    product.node
+      ?.variants;
+
+  if (
+    !initialConnection
+      ?.pageInfo
+      ?.hasNextPage
+  ) {
+    return;
+  }
+
+  let cursor =
+    initialConnection
+      .pageInfo
+      .endCursor;
+
+  let hasNextPage = true;
+
+  logSyncStatus(
+    "FETCHING_EXTRA_VARIANTS",
+    {
+      productId:
+        product.node.id,
+
+      product:
+        product.node.title
+    }
+  );
+
+  while (hasNextPage) {
+    const data =
+      await shopifyGraphQL(
+        PRODUCT_VARIANTS_QUERY,
+        {
+          id:
+            product.node.id,
+
+          first:
+            VARIANT_PAGE_SIZE,
+
+          after:
+            cursor
+        }
+      );
+
+    const connection =
+      data?.product
+        ?.variants;
+
+    if (!connection) {
+      break;
+    }
+
+    product.node
+      .variants
+      .edges
+      .push(
+        ...connection.edges
+      );
+
+    hasNextPage =
+      Boolean(
+        connection.pageInfo
+          .hasNextPage
+      );
+
+    cursor =
+      connection.pageInfo
+        .endCursor;
+
+    await sleep(100);
+  }
 }
 
 
 /* =========================================================
-   STANDARDIZE COLOR
+   COLOR HELPERS
 ========================================================= */
 
 function standardizeColorLabel(
   value
 ) {
   const label =
-    String(value || "").trim();
+    String(
+      value ||
+      ""
+    ).trim();
+
+  if (!label) {
+    return null;
+  }
 
   const comparable =
     label
@@ -606,99 +872,170 @@ function standardizeColorLabel(
       "multi",
       "multicolor",
       "multicolour"
-    ].includes(comparable)
+    ].includes(
+      comparable
+    )
   ) {
     return "Multicolour";
   }
 
-  return label || null;
+  return label;
 }
 
 
-/* =========================================================
-   METAOBJECT COLORS
-========================================================= */
+function uniqueStrings(values) {
+  const result = [];
 
-function getMetaobjectColors(
-  metafields
-) {
-  const metaobjects =
-    metafields.flatMap(
-      ({
-        node: metafield
-      }) => [
-        metafield.reference,
-
-        ...(
-          metafield.references
-            ?.edges || []
-        ).map(
-          ({ node }) =>
-            node
-        )
-      ]
-    );
-
-  return [
-    ...new Set(
-      metaobjects
-        .filter(
-          (metaobject) =>
-            metaobject?.type ===
-            "shopify--color-pattern"
-        )
-        .map(
-          (metaobject) =>
-            standardizeColorLabel(
-              metaobject.displayName
-            )
-        )
-        .filter(Boolean)
-    )
-  ];
-}
-
-
-/* =========================================================
-   SYNC PRODUCTS
-========================================================= */
-
-export async function syncProducts() {
-  validateEnvironment();
-
-  const allProducts = [];
-
-  const collectionIds =
+  const seen =
     new Set();
 
-  let cursor = null;
+  for (
+    const value
+    of values
+  ) {
+    const clean =
+      standardizeColorLabel(
+        value
+      );
 
-  let hasNextPage = true;
+    if (!clean) {
+      continue;
+    }
 
-  let page = 0;
+    const key =
+      clean
+        .trim()
+        .toLowerCase();
+
+    if (
+      seen.has(key)
+    ) {
+      continue;
+    }
+
+    seen.add(key);
+
+    result.push(clean);
+  }
+
+  return result;
+}
 
 
-  /* ---------------------------------------------------------
-     FETCH PRODUCTS
-  --------------------------------------------------------- */
+/* =========================================================
+   EXTRACT COLOR FROM METAOBJECT
+========================================================= */
 
-  logSyncStatus(
-    "FETCHING_PRODUCTS"
+function extractMetaobjectColor(
+  metaobject
+) {
+  if (!metaobject) {
+    return [];
+  }
+
+  const colors = [];
+
+  /*
+   * displayName is normally the Shopify
+   * standard color name.
+   */
+
+  if (
+    metaobject.displayName
+  ) {
+    colors.push(
+      metaobject.displayName
+    );
+  }
+
+  /*
+   * Also inspect fields in case the actual
+   * color label is stored there.
+   */
+
+  for (
+    const field
+    of metaobject.fields ||
+    []
+  ) {
+    const key =
+      String(
+        field.key ||
+        ""
+      )
+        .trim()
+        .toLowerCase();
+
+    if (
+      [
+        "label",
+        "name",
+        "color",
+        "colour"
+      ].includes(key)
+    ) {
+      if (
+        field.value
+      ) {
+        colors.push(
+          field.value
+        );
+      }
+    }
+  }
+
+  return uniqueStrings(
+    colors
   );
+}
 
-  while (hasNextPage) {
-    page++;
 
-    const data =
-      await shopifyGraphQL(`
-        {
-          products(
-            first: 250
-            ${
-              cursor
-                ? `, after: "${cursor}"`
-                : ""
+/* =========================================================
+   FETCH PRODUCT COLOR METAOBJECTS
+
+   Separate query prevents main product query
+   from exceeding Shopify query cost.
+========================================================= */
+
+const PRODUCT_METAFIELDS_QUERY = `
+query ProductMetafields(
+  $id: ID!,
+  $first: Int!,
+  $after: String
+) {
+  product(id: $id) {
+    metafields(
+      first: $first,
+      after: $after
+    ) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+
+      edges {
+        node {
+          id
+          namespace
+          key
+          type
+          value
+
+          reference {
+            ... on Metaobject {
+              id
+              type
+              displayName
+
+              fields {
+                key
+                value
+              }
             }
+          }
+
+          references(
+            first: 100
           ) {
             pageInfo {
               hasNextPage
@@ -707,481 +1044,1274 @@ export async function syncProducts() {
 
             edges {
               node {
-                id
-                title
-                handle
-                vendor
-                productType
-                status
-                createdAt
-                publishedAt
+                ... on Metaobject {
+                  id
+                  type
+                  displayName
 
-                metafields(
-                  first: 50
-                ) {
-                  edges {
-                    node {
-                      namespace
-                      key
-                      type
-                      value
-
-                      reference {
-                        ... on Metaobject {
-                          type
-                          displayName
-
-                          fields {
-                            key
-                            value
-                          }
-                        }
-                      }
-
-                      references(
-                        first: 50
-                      ) {
-                        edges {
-                          node {
-                            ... on Metaobject {
-                              type
-                              displayName
-
-                              fields {
-                                key
-                                value
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-
-                collections(
-                  first: 250
-                ) {
-                  edges {
-                    node {
-                      id
-                      handle
-                    }
-                  }
-                }
-
-                images(
-                  first: 2
-                ) {
-                  edges {
-                    node {
-                      url
-                    }
-                  }
-                }
-
-                variants(
-                  first: 250
-                ) {
-                  edges {
-                    node {
-                      id
-                      price
-                      inventoryQuantity
-
-                      selectedOptions {
-                        name
-                        value
-                      }
-                    }
+                  fields {
+                    key
+                    value
                   }
                 }
               }
             }
           }
         }
-      `);
+      }
+    }
+  }
+}
+`;
+
+
+/* =========================================================
+   PAGINATE METAFIELD REFERENCES
+========================================================= */
+
+const METAFIELD_REFERENCES_QUERY = `
+query MetafieldReferences(
+  $id: ID!,
+  $first: Int!,
+  $after: String
+) {
+  node(id: $id) {
+    ... on Metafield {
+      references(
+        first: $first,
+        after: $after
+      ) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+
+        edges {
+          node {
+            ... on Metaobject {
+              id
+              type
+              displayName
+
+              fields {
+                key
+                value
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`;
+
+
+/* =========================================================
+   FETCH EXTRA METAOBJECT REFERENCES
+========================================================= */
+
+async function fetchRemainingMetafieldReferences(
+  metafield
+) {
+  const references =
+    metafield
+      ?.references;
+
+  if (
+    !references
+      ?.pageInfo
+      ?.hasNextPage
+  ) {
+    return [];
+  }
+
+  const metaobjects = [];
+
+  let cursor =
+    references
+      .pageInfo
+      .endCursor;
+
+  let hasNextPage =
+    true;
+
+  while (hasNextPage) {
+    const data =
+      await shopifyGraphQL(
+        METAFIELD_REFERENCES_QUERY,
+        {
+          id:
+            metafield.id,
+
+          first:
+            REFERENCE_PAGE_SIZE,
+
+          after:
+            cursor
+        }
+      );
+
+    const connection =
+      data?.node
+        ?.references;
+
+    if (!connection) {
+      break;
+    }
+
+    for (
+      const edge
+      of connection.edges ||
+      []
+    ) {
+      if (
+        edge?.node
+      ) {
+        metaobjects.push(
+          edge.node
+        );
+      }
+    }
+
+    hasNextPage =
+      Boolean(
+        connection.pageInfo
+          .hasNextPage
+      );
+
+    cursor =
+      connection.pageInfo
+        .endCursor;
+
+    await sleep(75);
+  }
+
+  return metaobjects;
+}
+
+
+/* =========================================================
+   CHECK WHETHER METAOBJECT IS COLOR
+========================================================= */
+
+function isColorMetaobject(
+  metaobject
+) {
+  if (!metaobject) {
+    return false;
+  }
+
+  const type =
+    String(
+      metaobject.type ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+  return (
+    type ===
+      "shopify--color-pattern" ||
+    type.includes(
+      "color"
+    ) ||
+    type.includes(
+      "colour"
+    )
+  );
+}
+
+
+/* =========================================================
+   CHECK WHETHER METAFIELD LOOKS LIKE COLOR
+========================================================= */
+
+function isColorMetafield(
+  metafield
+) {
+  const namespace =
+    String(
+      metafield.namespace ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+  const key =
+    String(
+      metafield.key ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+  const combined =
+    `${namespace}.${key}`;
+
+  return (
+    combined.includes(
+      "color"
+    ) ||
+    combined.includes(
+      "colour"
+    )
+  );
+}
+
+
+/* =========================================================
+   FETCH COLORS FOR ONE PRODUCT
+========================================================= */
+
+async function fetchProductMetaobjectColors(
+  product
+) {
+  const colors = [];
+
+  let cursor = null;
+
+  let hasNextPage =
+    true;
+
+  while (hasNextPage) {
+    const data =
+      await shopifyGraphQL(
+        PRODUCT_METAFIELDS_QUERY,
+        {
+          id:
+            product.node.id,
+
+          first:
+            METAFIELD_PAGE_SIZE,
+
+          after:
+            cursor
+        }
+      );
+
+    const connection =
+      data?.product
+        ?.metafields;
+
+    if (!connection) {
+      break;
+    }
+
+    for (
+      const edge
+      of connection.edges ||
+      []
+    ) {
+      const metafield =
+        edge.node;
+
+      const metaobjects = [];
+
+      if (
+        metafield.reference
+      ) {
+        metaobjects.push(
+          metafield.reference
+        );
+      }
+
+      for (
+        const referenceEdge
+        of metafield.references
+          ?.edges ||
+        []
+      ) {
+        if (
+          referenceEdge?.node
+        ) {
+          metaobjects.push(
+            referenceEdge.node
+          );
+        }
+      }
+
+      if (
+        metafield.references
+          ?.pageInfo
+          ?.hasNextPage
+      ) {
+        const remaining =
+          await fetchRemainingMetafieldReferences(
+            metafield
+          );
+
+        metaobjects.push(
+          ...remaining
+        );
+      }
+
+      for (
+        const metaobject
+        of metaobjects
+      ) {
+        if (
+          isColorMetaobject(
+            metaobject
+          ) ||
+          isColorMetafield(
+            metafield
+          )
+        ) {
+          colors.push(
+            ...extractMetaobjectColor(
+              metaobject
+            )
+          );
+        }
+      }
+
+      /*
+       * Handle normal text/list metafields
+       * called color/colour as well.
+       */
+
+      if (
+        isColorMetafield(
+          metafield
+        ) &&
+        metafield.value
+      ) {
+        let parsed =
+          metafield.value;
+
+        try {
+          parsed =
+            JSON.parse(
+              metafield.value
+            );
+        } catch {
+          // Normal string.
+        }
+
+        if (
+          Array.isArray(
+            parsed
+          )
+        ) {
+          colors.push(
+            ...parsed
+          );
+        } else if (
+          typeof parsed ===
+          "string"
+        ) {
+          /*
+           * Do not add Shopify GIDs as colors.
+           */
+
+          if (
+            !parsed.startsWith(
+              "gid://"
+            )
+          ) {
+            colors.push(
+              parsed
+            );
+          }
+        }
+      }
+    }
+
+    hasNextPage =
+      Boolean(
+        connection.pageInfo
+          .hasNextPage
+      );
+
+    cursor =
+      connection.pageInfo
+        .endCursor;
+
+    await sleep(75);
+  }
+
+  return uniqueStrings(
+    colors
+  );
+}
+
+
+/* =========================================================
+   FETCH METAOBJECT COLORS FOR ALL PRODUCTS
+========================================================= */
+
+async function fetchAllProductColors(
+  products
+) {
+  logSyncStatus(
+    "FETCHING_PRODUCT_COLORS",
+    {
+      products:
+        products.length
+    }
+  );
+
+  let found =
+    0;
+
+  for (
+    let index = 0;
+    index < products.length;
+    index++
+  ) {
+    const product =
+      products[index];
+
+    try {
+      product.metaobjectColors =
+        await fetchProductMetaobjectColors(
+          product
+        );
+
+      if (
+        product
+          .metaobjectColors
+          .length
+      ) {
+        found++;
+      }
+    } catch (error) {
+      /*
+       * Do not kill 40k product sync because
+       * one product has a malformed metafield.
+       */
+
+      logSyncStatus(
+        "PRODUCT_COLOR_FETCH_FAILED",
+        {
+          productId:
+            product.node.id,
+
+          product:
+            product.node.title,
+
+          error:
+            error.message
+        }
+      );
+
+      product.metaobjectColors =
+        [];
+    }
+
+    if (
+      (index + 1) %
+        100 ===
+      0 ||
+      index ===
+        products.length -
+          1
+    ) {
+      logSyncStatus(
+        "PRODUCT_COLORS_PROGRESS",
+        {
+          processed:
+            index + 1,
+
+          total:
+            products.length,
+
+          productsWithMetaobjectColors:
+            found
+        }
+      );
+    }
+  }
+}
+
+
+/* =========================================================
+   COLLECTION POSITIONS
+
+   /collects.json works for manual/custom
+   collections.
+
+   Smart Collections return an error and are
+   skipped instead of stopping the sync.
+========================================================= */
+
+async function fetchAllCollects(
+  collectionIds
+) {
+  const shop =
+    requiredEnv("SHOPIFY_SHOP");
+
+  const result = {};
+
+  let current = 0;
+  let skipped = 0;
+
+  for (
+    const collectionId
+    of collectionIds
+  ) {
+    current++;
+
+    result[
+      collectionId
+    ] = {};
+
+    logSyncStatus(
+      "FETCHING_COLLECTION_POSITIONS",
+      {
+        collection:
+          current,
+
+        totalCollections:
+          collectionIds.length,
+
+        collectionId
+      }
+    );
+
+    let url =
+      `https://${shop}/admin/api/${API_VERSION}/collects.json` +
+      `?collection_id=${collectionId}` +
+      `&limit=250`;
+
+    let skippedCollection =
+      false;
+
+    while (url) {
+      const response =
+        await shopifyRequest(
+          url,
+          {
+            method: "GET",
+
+            headers: {
+              Accept:
+                "application/json"
+            }
+          }
+        );
+
+      const payload =
+        await response
+          .json()
+          .catch(() => ({}));
+
+      if (
+        response.status === 404
+      ) {
+        const errorText =
+          JSON.stringify(
+            payload
+          )
+            .toLowerCase();
+
+        if (
+          errorText.includes(
+            "smartcollection"
+          ) ||
+          errorText.includes(
+            "smart collection"
+          )
+        ) {
+          skipped++;
+
+          skippedCollection =
+            true;
+
+          logSyncStatus(
+            "SMART_COLLECTION_SKIPPED",
+            {
+              collection:
+                current,
+
+              totalCollections:
+                collectionIds.length,
+
+              collectionId
+            }
+          );
+
+          break;
+        }
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          `Shopify Collect request failed (${response.status}): ${JSON.stringify(
+            payload
+          )}`
+        );
+      }
+
+      for (
+        const collect
+        of payload.collects ||
+        []
+      ) {
+        const productId =
+          String(
+            collect.product_id
+          );
+
+        const position =
+          Number(
+            collect.position
+          );
+
+        result[
+          collectionId
+        ][
+          productId
+        ] =
+          position;
+      }
+
+      const link =
+        response.headers.get(
+          "link"
+        );
+
+      url =
+        link?.match(
+          /<([^>]+)>;\s*rel="next"/
+        )?.[1] ||
+        null;
+    }
+
+    if (
+      !skippedCollection
+    ) {
+      logSyncStatus(
+        "COLLECTION_POSITIONS_FETCHED",
+        {
+          collection:
+            current,
+
+          totalCollections:
+            collectionIds.length,
+
+          collectionId,
+
+          products:
+            Object.keys(
+              result[
+                collectionId
+              ]
+            ).length
+        }
+      );
+    }
+
+    await sleep(100);
+  }
+
+  logSyncStatus(
+    "COLLECTION_POSITIONS_COMPLETED",
+    {
+      totalCollections:
+        collectionIds.length,
+
+      smartCollectionsSkipped:
+        skipped,
+
+      manualCollectionsProcessed:
+        collectionIds.length -
+        skipped
+    }
+  );
+
+  return result;
+}
+
+
+/* =========================================================
+   BEST SELLING
+========================================================= */
+
+async function fetchBestSelling() {
+  let collectionId =
+    process.env
+      .SHOPIFY_BEST_SELLING_COLLECTION_ID
+      ?.trim();
+
+  if (!collectionId) {
+    logSyncStatus(
+      "BEST_SELLING_COLLECTION_NOT_SET"
+    );
+
+    return {};
+  }
+
+  /*
+   * Allow numeric collection ID in .env.
+   */
+
+  if (
+    /^\d+$/.test(
+      collectionId
+    )
+  ) {
+    collectionId =
+      `gid://shopify/Collection/${collectionId}`;
+  }
+
+  const ranks = {};
+
+  let cursor = null;
+
+  let rank = 1;
+
+  let page = 0;
+
+  let hasNextPage =
+    true;
+
+  const query = `
+    query BestSelling(
+      $id: ID!,
+      $first: Int!,
+      $after: String
+    ) {
+      collection(id: $id) {
+        products(
+          first: $first,
+          after: $after,
+          sortKey: BEST_SELLING
+        ) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+
+          edges {
+            node {
+              id
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  while (hasNextPage) {
+    page++;
+
+    const data =
+      await shopifyGraphQL(
+        query,
+        {
+          id:
+            collectionId,
+
+          first:
+            250,
+
+          after:
+            cursor
+        }
+      );
 
     const products =
-      data.products;
+      data?.collection
+        ?.products;
+
+    if (!products) {
+      logSyncStatus(
+        "BEST_SELLING_COLLECTION_NOT_FOUND",
+        {
+          collectionId
+        }
+      );
+
+      return {};
+    }
 
     for (
       const edge
       of products.edges
     ) {
-      const node =
-        edge.node;
+      const productId =
+        edge.node.id
+          .split("/")
+          .pop();
 
-      const collections =
-        node.collections.edges.map(
-          ({
-            node: collection
-          }) => {
-            const id =
-              collection.id
-                .split("/")
-                .pop();
-
-            collectionIds.add(id);
-
-            return {
-              id,
-              handle:
-                collection.handle
-            };
-          }
-        );
-
-      allProducts.push({
-        node,
-        collections
-      });
+      ranks[
+        productId
+      ] =
+        rank++;
     }
 
     logSyncStatus(
-      "PRODUCT_PAGE_FETCHED",
+      "BEST_SELLING_PAGE_FETCHED",
       {
         page,
 
-        productsOnPage:
-          products.edges.length,
-
-        totalProductsFetched:
-          allProducts.length
+        products:
+          products.edges.length
       }
     );
 
     hasNextPage =
-      products.pageInfo.hasNextPage;
+      Boolean(
+        products.pageInfo
+          .hasNextPage
+      );
 
     cursor =
-      products.pageInfo.endCursor;
+      products.pageInfo
+        .endCursor;
 
-    await sleep(200);
+    await sleep(100);
   }
 
-
-  /* ---------------------------------------------------------
-     FETCH COLLECTION POSITIONS + BEST SELLING
-  --------------------------------------------------------- */
-
-  const [
-    collectsMap,
-    bestSellingMap
-  ] =
-    await Promise.all([
-      fetchAllCollects(
-        [...collectionIds]
-      ),
-
-      fetchBestSelling()
-    ]);
+  return ranks;
+}
 
 
-  /* ---------------------------------------------------------
-     PROCESS PRODUCTS
-  --------------------------------------------------------- */
+/* =========================================================
+   OPTION HELPERS
+========================================================= */
 
-  logSyncStatus(
-    "PROCESSING_PRODUCTS",
-    {
-      products:
-        allProducts.length,
+function optionValue(
+  selectedOptions,
+  names
+) {
+  const accepted =
+    names.map(
+      (name) =>
+        String(name)
+          .trim()
+          .toLowerCase()
+    );
 
-      collections:
-        collectionIds.size
-    }
+  const option =
+    (
+      selectedOptions ||
+      []
+    ).find(
+      (item) =>
+        accepted.includes(
+          String(
+            item.name ||
+            ""
+          )
+            .trim()
+            .toLowerCase()
+        )
+    );
+
+  return (
+    option?.value ||
+    null
   );
+}
 
 
-  const rows =
-    allProducts.map(
+/* =========================================================
+   PROCESS PRODUCT
+========================================================= */
+
+function processProduct(
+  product,
+  collectsMap,
+  bestSellingMap
+) {
+  const {
+    node,
+    collections
+  } =
+    product;
+
+  const productId =
+    node.id
+      .split("/")
+      .pop();
+
+
+  /* ---------------------------------------------------------
+     COLLECTION POSITION
+  --------------------------------------------------------- */
+
+  const positions =
+    collections
+      .map(
+        (collection) =>
+          collectsMap[
+            collection.id
+          ]?.[
+            productId
+          ]
+      )
+      .filter(
+        (position) =>
+          Number.isFinite(
+            Number(
+              position
+            )
+          )
+      )
+      .map(Number);
+
+
+  /* ---------------------------------------------------------
+     VARIANTS
+  --------------------------------------------------------- */
+
+  const variants =
+    (
+      node.variants
+        ?.edges ||
+      []
+    ).map(
       ({
-        node,
-        collections
+        node:
+          variant
       }) => {
 
-        const productId =
-          node.id
-            .split("/")
-            .pop();
+        const selectedOptions =
+          variant.selectedOptions ||
+          [];
 
-
-        /* COLLECTION POSITION */
-
-        const positions =
-          collections
-            .map(
-              (collection) =>
-                collectsMap[
-                  collection.id
-                ]?.[
-                  productId
-                ]
-            )
-            .filter(
-              (position) =>
-                Number.isFinite(
-                  position
-                )
-            );
-
-
-        /* VARIANTS */
-
-        const variants =
-          node.variants.edges.map(
-            ({
-              node: variant
-            }) => {
-
-              const selectedOptions =
-                variant.selectedOptions ||
-                [];
-
-              const inventoryQuantity =
-                Number(
-                  variant.inventoryQuantity ||
-                  0
-                );
-
-              return {
-                id:
-                  variant.id
-                    .split("/")
-                    .pop(),
-
-                price:
-                  Number(
-                    variant.price ||
-                    0
-                  ),
-
-                inventory_quantity:
-                  inventoryQuantity,
-
-                available:
-                  inventoryQuantity >
-                  0,
-
-                size:
-                  optionValue(
-                    selectedOptions,
-                    ["size"]
-                  ),
-
-                color:
-                  optionValue(
-                    selectedOptions,
-                    [
-                      "color",
-                      "colour"
-                    ]
-                  )
-              };
-            }
-          );
-
-
-        /* COLORS */
-
-        const variantColors = [
-          ...new Set(
-            variants
-              .map(
-                (variant) =>
-                  standardizeColorLabel(
-                    variant.color
-                  )
-              )
-              .filter(Boolean)
-          )
-        ];
-
-
-        /* INVENTORY */
-
-        const inventoryQuantity =
-          variants.reduce(
-            (
-              sum,
-              variant
-            ) =>
-              sum +
-              variant.inventory_quantity,
+        const inventory =
+          Number(
+            variant
+              .inventoryQuantity ||
             0
           );
 
+        /*
+         * Preserve ALL Shopify option values.
+         */
 
-        /* METAFIELDS */
+        const options = {};
 
-        const metafields =
-          node.metafields
-            ?.edges || [];
+        for (
+          const option
+          of selectedOptions
+        ) {
+          const name =
+            String(
+              option.name ||
+              ""
+            ).trim();
 
+          const value =
+            String(
+              option.value ||
+              ""
+            ).trim();
 
-        /* METAOBJECT COLORS */
-
-        const metaobjectColors =
-          getMetaobjectColors(
-            metafields
-          );
-
-
-        /* DELIVERY TIME */
-
-        const deliveryTimeline =
-          metafields.find(
-            ({
-              node: metafield
-            }) =>
-              metafield.namespace ===
-                "custom" &&
-              metafield.key ===
-                "delivery_time"
-          )?.node.value ||
-          null;
-
-
-        /* PRICE */
-
-        const prices =
-          variants
-            .map(
-              (variant) =>
-                variant.price
-            )
-            .filter(
-              (price) =>
-                Number.isFinite(
-                  price
-                )
-            );
-
-        const minimumPrice =
-          prices.length
-            ? Math.min(
-                ...prices
-              )
-            : 0;
-
-
-        /* IMAGES */
-
-        const images =
-          node.images.edges.map(
-            ({
-              node: image
-            }) =>
-              image.url
-          );
-
-
-        /* FINAL ROW */
+          if (
+            name &&
+            value
+          ) {
+            options[
+              name
+            ] =
+              value;
+          }
+        }
 
         return {
           id:
-            productId,
-
-          title:
-            node.title,
-
-          handle:
-            node.handle,
-
-          vendor:
-            node.vendor,
-
-          product_type:
-            node.productType,
-
-          collection_handle:
-            collections.map(
-              (collection) =>
-                collection.handle
-            ),
-
-          position:
-            positions.length
-              ? Math.min(
-                  ...positions
-                )
-              : 9999,
-
-          best_selling_rank:
-            bestSellingMap[
-              productId
-            ] ?? 9999,
+            variant.id
+              .split("/")
+              .pop(),
 
           price:
-            minimumPrice,
-
-          images,
-
-          image:
-            images[0] ||
-            null,
-
-          image2:
-            images[1] ||
-            null,
-
-          color:
-            metaobjectColors.length
-              ? metaobjectColors
-              : variantColors,
-
-          variants,
-
-          inventory_quantity:
-            inventoryQuantity,
-
-          status:
-            node.status,
-
-          published:
-            node.status ===
-              "ACTIVE" &&
-            Boolean(
-              node.publishedAt
+            Number(
+              variant.price ||
+              0
             ),
 
-          delivery_timeline:
-            deliveryTimeline,
+          inventory_quantity:
+            inventory,
 
-          created_at:
-            node.createdAt,
+          available:
+            inventory > 0,
 
-          published_at:
-            node.publishedAt
+          size:
+            optionValue(
+              selectedOptions,
+              [
+                "size"
+              ]
+            ),
+
+          color:
+            optionValue(
+              selectedOptions,
+              [
+                "color",
+                "colour"
+              ]
+            ),
+
+          /*
+           * Keeps all options such as:
+           * Size
+           * Color
+           * Style
+           * Material
+           * etc.
+           */
+
+          options,
+
+          selected_options:
+            selectedOptions.map(
+              (option) => ({
+                name:
+                  option.name,
+
+                value:
+                  option.value
+              })
+            )
         };
       }
     );
 
 
   /* ---------------------------------------------------------
-     UPLOAD TO SUPABASE
+     VARIANT COLORS
   --------------------------------------------------------- */
 
-  const BATCH_SIZE = 500;
+  const variantColors =
+    uniqueStrings(
+      variants
+        .map(
+          (variant) =>
+            variant.color
+        )
+        .filter(Boolean)
+    );
+
+
+  /* ---------------------------------------------------------
+     METAOBJECT COLORS
+  --------------------------------------------------------- */
+
+  const metaobjectColors =
+    uniqueStrings(
+      product
+        .metaobjectColors ||
+      []
+    );
+
+
+  /* ---------------------------------------------------------
+     FINAL COLORS
+
+     IMPORTANT:
+
+     Do NOT choose one source over another.
+
+     Combine:
+     - Shopify Color Pattern metaobjects
+     - Color metafields
+     - Variant Color option
+
+     This prevents missing color values.
+  --------------------------------------------------------- */
+
+  const colors =
+    uniqueStrings([
+      ...metaobjectColors,
+      ...variantColors
+    ]);
+
+
+  /* ---------------------------------------------------------
+     INVENTORY
+  --------------------------------------------------------- */
+
+  const inventoryQuantity =
+    variants.reduce(
+      (
+        total,
+        variant
+      ) =>
+        total +
+        Number(
+          variant
+            .inventory_quantity ||
+          0
+        ),
+      0
+    );
+
+
+  /* ---------------------------------------------------------
+     PRICE
+  --------------------------------------------------------- */
+
+  const prices =
+    variants
+      .map(
+        (variant) =>
+          Number(
+            variant.price
+          )
+      )
+      .filter(
+        (price) =>
+          Number.isFinite(
+            price
+          )
+      );
+
+  const minimumPrice =
+    prices.length
+      ? Math.min(
+          ...prices
+        )
+      : 0;
+
+
+  /* ---------------------------------------------------------
+     IMAGES
+  --------------------------------------------------------- */
+
+  const images =
+    (
+      node.images
+        ?.edges ||
+      []
+    )
+      .map(
+        ({
+          node:
+            image
+        }) =>
+          image?.url
+      )
+      .filter(Boolean);
+
+
+  /* ---------------------------------------------------------
+     FINAL ROW
+  --------------------------------------------------------- */
+
+  return {
+    id:
+      productId,
+
+    title:
+      node.title,
+
+    handle:
+      node.handle,
+
+    vendor:
+      node.vendor,
+
+    product_type:
+      node.productType,
+
+    collection_handle:
+      collections.map(
+        (collection) =>
+          collection.handle
+      ),
+
+    position:
+      positions.length
+        ? Math.min(
+            ...positions
+          )
+        : 9999,
+
+    best_selling_rank:
+      bestSellingMap[
+        productId
+      ] ??
+      9999,
+
+    price:
+      minimumPrice,
+
+    images,
+
+    image:
+      images[0] ||
+      null,
+
+    image2:
+      images[1] ||
+      null,
+
+    /*
+     * Combined complete color array.
+     */
+
+    color:
+      colors,
+
+    variants,
+
+    inventory_quantity:
+      inventoryQuantity,
+
+    status:
+      node.status,
+
+    published:
+      node.status ===
+        "ACTIVE" &&
+      Boolean(
+        node.publishedAt
+      ),
+
+    delivery_timeline:
+      node.deliveryTime
+        ?.value ||
+      null,
+
+    created_at:
+      node.createdAt,
+
+    published_at:
+      node.publishedAt
+  };
+}
+
+
+/* =========================================================
+   UPLOAD PRODUCTS TO SUPABASE
+========================================================= */
+
+async function uploadProducts(
+  rows
+) {
+  const supabase =
+    getSupabase();
+
+  const totalBatches =
+    Math.ceil(
+      rows.length /
+      SUPABASE_BATCH_SIZE
+    );
 
   for (
     let index = 0;
     index < rows.length;
-    index += BATCH_SIZE
+    index +=
+      SUPABASE_BATCH_SIZE
   ) {
-    const batchNumber =
-      Math.floor(
-        index /
-        BATCH_SIZE
-      ) + 1;
-
     const batch =
       rows.slice(
         index,
         index +
-          BATCH_SIZE
+          SUPABASE_BATCH_SIZE
       );
+
+    const batchNumber =
+      Math.floor(
+        index /
+        SUPABASE_BATCH_SIZE
+      ) + 1;
 
     logSyncStatus(
       "UPLOADING_BATCH",
@@ -1189,14 +2319,20 @@ export async function syncProducts() {
         batch:
           batchNumber,
 
+        totalBatches,
+
         batchSize:
           batch.length
       }
     );
 
-    const { error } =
+    const {
+      error
+    } =
       await supabase
-        .from("products")
+        .from(
+          "products"
+        )
         .upsert(
           batch,
           {
@@ -1207,10 +2343,203 @@ export async function syncProducts() {
 
     if (error) {
       throw new Error(
-        `Supabase upsert failed: ${error.message}`
+        `Supabase products upsert failed: ${error.message}`
+      );
+    }
+
+    logSyncStatus(
+      "BATCH_UPLOADED",
+      {
+        batch:
+          batchNumber,
+
+        totalBatches
+      }
+    );
+  }
+}
+
+
+/* =========================================================
+   MAIN SYNC
+========================================================= */
+
+export async function syncProducts() {
+  validateEnvironment();
+
+  getSupabase();
+
+
+  /* ---------------------------------------------------------
+     1. FETCH PRODUCTS
+  --------------------------------------------------------- */
+
+  const {
+    products,
+    collectionIds
+  } =
+    await fetchAllProducts();
+
+
+  /* ---------------------------------------------------------
+     2. FETCH REMAINING VARIANTS
+  --------------------------------------------------------- */
+
+  logSyncStatus(
+    "CHECKING_PRODUCT_VARIANTS",
+    {
+      products:
+        products.length
+    }
+  );
+
+  let productsWithExtraVariants =
+    0;
+
+  for (
+    let index = 0;
+    index < products.length;
+    index++
+  ) {
+    const product =
+      products[index];
+
+    if (
+      product.node
+        ?.variants
+        ?.pageInfo
+        ?.hasNextPage
+    ) {
+      productsWithExtraVariants++;
+
+      await fetchRemainingVariants(
+        product
+      );
+    }
+
+    if (
+      (index + 1) %
+        500 ===
+      0
+    ) {
+      logSyncStatus(
+        "VARIANT_CHECK_PROGRESS",
+        {
+          processed:
+            index + 1,
+
+          total:
+            products.length,
+
+          productsWithExtraVariants
+        }
       );
     }
   }
+
+
+  /* ---------------------------------------------------------
+     3. FETCH ALL COLOR METAOBJECTS/METAFIELDS
+  --------------------------------------------------------- */
+
+  await fetchAllProductColors(
+    products
+  );
+
+
+  /* ---------------------------------------------------------
+     4. COLLECTION POSITIONS + BEST SELLING
+  --------------------------------------------------------- */
+
+  const [
+    collectsMap,
+    bestSellingMap
+  ] =
+    await Promise.all([
+      fetchAllCollects(
+        collectionIds
+      ),
+
+      fetchBestSelling()
+    ]);
+
+
+  /* ---------------------------------------------------------
+     5. PROCESS PRODUCTS
+  --------------------------------------------------------- */
+
+  logSyncStatus(
+    "PROCESSING_PRODUCTS",
+    {
+      products:
+        products.length,
+
+      collections:
+        collectionIds.length
+    }
+  );
+
+  const rows =
+    products.map(
+      (product) =>
+        processProduct(
+          product,
+          collectsMap,
+          bestSellingMap
+        )
+    );
+
+
+  /* ---------------------------------------------------------
+     COLOR DEBUG SUMMARY
+  --------------------------------------------------------- */
+
+  const productsWithColors =
+    rows.filter(
+      (product) =>
+        Array.isArray(
+          product.color
+        ) &&
+        product.color.length >
+          0
+    ).length;
+
+  const productsWithoutColors =
+    rows.length -
+    productsWithColors;
+
+  const allColors =
+    uniqueStrings(
+      rows.flatMap(
+        (product) =>
+          product.color ||
+          []
+      )
+    );
+
+  logSyncStatus(
+    "COLOR_SUMMARY",
+    {
+      productsWithColors,
+
+      productsWithoutColors,
+
+      uniqueColors:
+        allColors.length,
+
+      colors:
+        allColors
+    }
+  );
+
+
+  /* ---------------------------------------------------------
+     6. UPLOAD
+  --------------------------------------------------------- */
+
+  await uploadProducts(
+    rows
+  );
 
 
   /* ---------------------------------------------------------
@@ -1226,6 +2555,13 @@ export async function syncProducts() {
       syncedProducts:
         rows.length,
 
+      productsWithColors,
+
+      productsWithoutColors,
+
+      uniqueColors:
+        allColors.length,
+
       lastUpdatedAt
     }
   );
@@ -1233,6 +2569,13 @@ export async function syncProducts() {
   return {
     syncedProducts:
       rows.length,
+
+    productsWithColors,
+
+    productsWithoutColors,
+
+    uniqueColors:
+      allColors.length,
 
     lastUpdatedAt
   };
@@ -1248,42 +2591,39 @@ export default async function handler(
   res
 ) {
   try {
-
     validateEnvironment({
-      requireCronSecret: true
+      requireCronSecret:
+        true
     });
 
-
-    /* ONLY GET */
-
     if (
-      req.method !== "GET"
+      req.method !==
+      "GET"
     ) {
       return res
         .status(405)
         .json({
+          ok: false,
+
           error:
             "Method not allowed"
         });
     }
 
-
-    /* CHECK CRON SECRET */
-
     if (
-      req.headers.authorization !==
+      req.headers
+        .authorization !==
       `Bearer ${process.env.CRON_SECRET}`
     ) {
       return res
         .status(401)
         .json({
+          ok: false,
+
           error:
             "Unauthorized"
         });
     }
-
-
-    /* START */
 
     logSyncStatus(
       "SYNC_STARTED",
@@ -1293,20 +2633,13 @@ export default async function handler(
       }
     );
 
-
     const result =
       await syncProducts();
-
-
-    /* NO CACHE */
 
     res.setHeader(
       "Cache-Control",
       "no-store"
     );
-
-
-    /* RESPONSE */
 
     return res
       .status(200)
@@ -1320,10 +2653,12 @@ export default async function handler(
       });
 
   } catch (error) {
-
     logSyncStatus(
       "SYNC_FAILED",
       {
+        trigger:
+          "api",
+
         error:
           error.message
       }
@@ -1347,30 +2682,56 @@ export default async function handler(
 
 
 /* =========================================================
-   MANUAL COMMAND LINE RUNNER
+   COMMAND LINE RUNNER
 
-   Run:
+   Both work:
+
+   node sync.js
    node sync.js --run
 ========================================================= */
 
 async function runFromCommandLine() {
+  console.log(
+    "\n=========================================="
+  );
+
+  console.log(
+    " Shopify -> Supabase Sync"
+  );
+
+  console.log(
+    "==========================================\n"
+  );
+
   try {
-
     console.log(
-      "\n=========================================="
+      "Environment:"
     );
 
-    console.log(
-      " Shopify → Supabase Sync"
-    );
+    const envNames = [
+      "SHOPIFY_SHOP",
+      "SHOPIFY_CLIENT_ID",
+      "SHOPIFY_CLIENT_SECRET",
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY"
+    ];
 
-    console.log(
-      "==========================================\n"
-    );
+    for (
+      const name
+      of envNames
+    ) {
+      console.log(
+        `${name}: ${
+          process.env[name]
+            ? "OK"
+            : "MISSING"
+        }`
+      );
+    }
 
+    console.log("");
 
     validateEnvironment();
-
 
     logSyncStatus(
       "SYNC_STARTED",
@@ -1380,10 +2741,8 @@ async function runFromCommandLine() {
       }
     );
 
-
     const result =
       await syncProducts();
-
 
     console.log(
       "\n=========================================="
@@ -1402,6 +2761,18 @@ async function runFromCommandLine() {
     );
 
     console.log(
+      `Products with colors: ${result.productsWithColors}`
+    );
+
+    console.log(
+      `Products without colors: ${result.productsWithoutColors}`
+    );
+
+    console.log(
+      `Unique colors: ${result.uniqueColors}`
+    );
+
+    console.log(
       `Last updated: ${result.lastUpdatedAt}`
     );
 
@@ -1409,10 +2780,20 @@ async function runFromCommandLine() {
       "==========================================\n"
     );
 
-
-    process.exit(0);
+    process.exitCode =
+      0;
 
   } catch (error) {
+    logSyncStatus(
+      "SYNC_FAILED",
+      {
+        trigger:
+          "command-line",
+
+        error:
+          error.message
+      }
+    );
 
     console.error(
       "\n=========================================="
@@ -1434,17 +2815,31 @@ async function runFromCommandLine() {
       "==========================================\n"
     );
 
-
-    process.exit(1);
+    process.exitCode =
+      1;
   }
 }
 
 
 /* =========================================================
-   DETECT --run
+   DIRECT RUN DETECTION
 ========================================================= */
 
+const isDirectRun =
+  process.argv[1] &&
+  process.argv[1]
+    .replace(
+      /\\/g,
+      "/"
+    )
+    .toLowerCase()
+    .endsWith(
+      "/sync.js"
+    );
+
+
 if (
+  isDirectRun ||
   process.argv.includes(
     "--run"
   )

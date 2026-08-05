@@ -1,20 +1,680 @@
 import { createClient } from "@supabase/supabase-js";
 
+/* =========================================================
+   SUPABASE
+========================================================= */
+
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE
 );
 
-export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
+/* =========================================================
+   HELPERS
+========================================================= */
+
+function safeParse(value) {
+  try {
+    if (
+      value === null ||
+      value === undefined ||
+      value === ""
+    ) {
+      return [];
+    }
+
+    if (Array.isArray(value)) {
+      return value;
+    }
+
+    if (typeof value === "object") {
+      return [value];
+    }
+
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+
+      if (!trimmed) {
+        return [];
+      }
+
+      try {
+        const parsed =
+          JSON.parse(trimmed);
+
+        return Array.isArray(parsed)
+          ? parsed
+          : [parsed];
+      } catch {
+        /*
+         * Support comma-separated strings too.
+         */
+
+        if (trimmed.includes(",")) {
+          return trimmed
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean);
+        }
+
+        return [
+          trimmed
+            .replace(/^\[/, "")
+            .replace(/\]$/, "")
+            .replace(/^"/, "")
+            .replace(/"$/, "")
+            .trim()
+        ].filter(Boolean);
+      }
+    }
+
+    return [value];
+
+  } catch {
+    return [];
+  }
+}
+
+
+function normalize(value) {
+  return String(
+    value || ""
+  )
+    .trim()
+    .toLowerCase();
+}
+
+
+function normalizeComparable(value) {
+  return normalize(value)
+    .replace(/[\s_-]+/g, "");
+}
+
+
+function toList(value) {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+    return [];
   }
 
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((item) =>
+        String(item).split(",")
+      )
+      .map((item) =>
+        String(item).trim()
+      )
+      .filter(Boolean);
+  }
+
+  return String(value)
+    .split(",")
+    .map((item) =>
+      item.trim()
+    )
+    .filter(Boolean);
+}
+
+
+function sortAlpha(values) {
+  return [...values].sort(
+    (a, b) =>
+      String(a).localeCompare(
+        String(b),
+        undefined,
+        {
+          sensitivity: "base",
+          numeric: true
+        }
+      )
+  );
+}
+
+
+/* =========================================================
+   UNIQUE VALUES
+
+   Case-insensitive deduplication.
+========================================================= */
+
+function uniqueValues(values) {
+  const result = [];
+
+  const seen =
+    new Set();
+
+  for (const value of values) {
+    const clean =
+      String(
+        value || ""
+      ).trim();
+
+    if (!clean) {
+      continue;
+    }
+
+    const key =
+      normalize(clean);
+
+    if (
+      seen.has(key)
+    ) {
+      continue;
+    }
+
+    seen.add(key);
+
+    result.push(clean);
+  }
+
+  return result;
+}
+
+
+/* =========================================================
+   STANDARDIZE COLOR
+========================================================= */
+
+function standardizeColor(value) {
+  const label =
+    String(
+      value || ""
+    ).trim();
+
+  if (!label) {
+    return null;
+  }
+
+  const comparable =
+    normalizeComparable(
+      label
+    );
+
+  if (
+    [
+      "multi",
+      "multicolor",
+      "multicolour"
+    ].includes(comparable)
+  ) {
+    return "Multicolour";
+  }
+
+  return label;
+}
+
+
+/* =========================================================
+   VARIANTS
+========================================================= */
+
+function getVariants(product) {
+  return safeParse(
+    product?.variants
+  ).filter(
+    (variant) =>
+      variant &&
+      typeof variant ===
+        "object"
+  );
+}
+
+
+function variantIsAvailable(
+  variant
+) {
+  /*
+   * Prefer inventory quantity.
+   */
+
+  if (
+    variant
+      ?.inventory_quantity !==
+      undefined &&
+    variant
+      ?.inventory_quantity !==
+      null
+  ) {
+    return (
+      Number(
+        variant
+          .inventory_quantity ||
+        0
+      ) > 0
+    );
+  }
+
+  /*
+   * Fallback to available boolean.
+   */
+
+  return (
+    variant?.available ===
+      true ||
+    variant?.available ===
+      "true"
+  );
+}
+
+
+function productIsInStock(
+  product
+) {
+  const variants =
+    getVariants(product);
+
+  if (
+    variants.length
+  ) {
+    return variants.some(
+      variantIsAvailable
+    );
+  }
+
+  return (
+    Number(
+      product
+        ?.inventory_quantity ||
+      0
+    ) > 0
+  );
+}
+
+
+/* =========================================================
+   GET VARIANT OPTION
+
+   Supports:
+
+   variant.size
+   variant.color
+
+   AND new sync format:
+
+   variant.options
+
+   AND:
+
+   variant.selected_options
+========================================================= */
+
+function getVariantOption(
+  variant,
+  names
+) {
+  const accepted =
+    names.map(
+      normalize
+    );
+
+
+  /* ---------------------------------------------------------
+     DIRECT PROPERTY
+  --------------------------------------------------------- */
+
+  for (
+    const name
+    of names
+  ) {
+    const direct =
+      variant?.[
+        name
+      ];
+
+    if (
+      direct !==
+        undefined &&
+      direct !==
+        null &&
+      String(
+        direct
+      ).trim()
+    ) {
+      return String(
+        direct
+      ).trim();
+    }
+  }
+
+
+  /* ---------------------------------------------------------
+     OPTIONS OBJECT
+  --------------------------------------------------------- */
+
+  if (
+    variant?.options &&
+    typeof variant.options ===
+      "object" &&
+    !Array.isArray(
+      variant.options
+    )
+  ) {
+    for (
+      const [
+        key,
+        value
+      ]
+      of Object.entries(
+        variant.options
+      )
+    ) {
+      if (
+        accepted.includes(
+          normalize(key)
+        ) &&
+        value !==
+          undefined &&
+        value !==
+          null &&
+        String(
+          value
+        ).trim()
+      ) {
+        return String(
+          value
+        ).trim();
+      }
+    }
+  }
+
+
+  /* ---------------------------------------------------------
+     SELECTED OPTIONS
+  --------------------------------------------------------- */
+
+  const selectedOptions =
+    safeParse(
+      variant
+        ?.selected_options ||
+      variant
+        ?.selectedOptions
+    );
+
+  for (
+    const option
+    of selectedOptions
+  ) {
+    if (
+      !option ||
+      typeof option !==
+        "object"
+    ) {
+      continue;
+    }
+
+    if (
+      accepted.includes(
+        normalize(
+          option.name
+        )
+      )
+    ) {
+      const value =
+        String(
+          option.value ||
+          ""
+        ).trim();
+
+      if (value) {
+        return value;
+      }
+    }
+  }
+
+  return null;
+}
+
+
+/* =========================================================
+   GET PRODUCT COLORS
+
+   IMPORTANT:
+
+   Combines:
+   1. product.color
+   2. variant.color
+   3. variant.options.Color
+   4. variant.selected_options
+
+   This makes sure filter API sees every color synced.
+========================================================= */
+
+function getProductColors(
+  product,
+  {
+    availableOnly = false
+  } = {}
+) {
+  const colors = [];
+
+
+  /* ---------------------------------------------------------
+     PRODUCT COLOR ARRAY
+  --------------------------------------------------------- */
+
+  safeParse(
+    product?.color
+  ).forEach(
+    (color) => {
+
+      /*
+       * Protect against accidentally receiving objects.
+       */
+
+      if (
+        typeof color ===
+          "string" ||
+        typeof color ===
+          "number"
+      ) {
+        const clean =
+          standardizeColor(
+            color
+          );
+
+        if (clean) {
+          colors.push(clean);
+        }
+      }
+    }
+  );
+
+
+  /* ---------------------------------------------------------
+     VARIANT COLORS
+  --------------------------------------------------------- */
+
+  const variants =
+    getVariants(product);
+
+  for (
+    const variant
+    of variants
+  ) {
+    if (
+      availableOnly &&
+      !variantIsAvailable(
+        variant
+      )
+    ) {
+      continue;
+    }
+
+    const color =
+      getVariantOption(
+        variant,
+        [
+          "color",
+          "colour"
+        ]
+      );
+
+    const clean =
+      standardizeColor(
+        color
+      );
+
+    if (clean) {
+      colors.push(clean);
+    }
+  }
+
+
+  return uniqueValues(
+    colors
+  );
+}
+
+
+/* =========================================================
+   GET PRODUCT SIZES
+========================================================= */
+
+function getProductSizes(
+  product,
+  {
+    availableOnly = false
+  } = {}
+) {
+  const sizes = [];
+
+  const variants =
+    getVariants(product);
+
+  for (
+    const variant
+    of variants
+  ) {
+    if (
+      availableOnly &&
+      !variantIsAvailable(
+        variant
+      )
+    ) {
+      continue;
+    }
+
+    const size =
+      getVariantOption(
+        variant,
+        ["size"]
+      );
+
+    if (size) {
+      sizes.push(size);
+    }
+  }
+
+  return uniqueValues(
+    sizes
+  );
+}
+
+
+/* =========================================================
+   VALUE MATCHING
+========================================================= */
+
+function exactMatch(
+  value,
+  selected
+) {
+  return (
+    normalize(value) ===
+    normalize(selected)
+  );
+}
+
+
+function colorMatch(
+  value,
+  selected
+) {
+  /*
+   * Use exact normalized matching first.
+
+   * Also normalize spaces/hyphens/underscores so:
+   *
+   * Dark Blue
+   * Dark-Blue
+   * dark_blue
+   *
+   * can match.
+   */
+
+  return (
+    normalizeComparable(
+      value
+    ) ===
+    normalizeComparable(
+      selected
+    )
+  );
+}
+
+
+/* =========================================================
+   API HANDLER
+========================================================= */
+
+export default async function handler(
+  req,
+  res
+) {
+
+  /* ---------------------------------------------------------
+     CORS
+  --------------------------------------------------------- */
+
+  res.setHeader(
+    "Access-Control-Allow-Origin",
+    "*"
+  );
+
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET,OPTIONS"
+  );
+
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type"
+  );
+
+  if (
+    req.method ===
+    "OPTIONS"
+  ) {
+    return res
+      .status(200)
+      .end();
+  }
+
+
+  if (
+    req.method !==
+    "GET"
+  ) {
+    return res
+      .status(405)
+      .json({
+        error:
+          "Method not allowed"
+      });
+  }
+
+
   try {
+
+    /* =======================================================
+       QUERY PARAMETERS
+    ======================================================= */
+
     const {
       collection,
       minPrice,
@@ -27,346 +687,1023 @@ export default async function handler(req, res) {
       delivery_timeline,
       page,
       sort_by
-    } = req.query;
+    } =
+      req.query;
 
-    const normalizedCollection = String(collection || "")
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9-_]/g, "");
 
-    const safeParse = (value) => {
-      try {
-        if (!value) return [];
-        if (Array.isArray(value)) return value;
+    const normalizedCollection =
+      String(
+        collection ||
+        ""
+      )
+        .trim()
+        .toLowerCase()
+        .replace(
+          /[^a-z0-9-_]/g,
+          ""
+        );
 
-        if (typeof value === "string") {
-          const parsed = JSON.parse(value);
-          return Array.isArray(parsed) ? parsed : [parsed];
-        }
 
-        return [value];
-      } catch {
-        return [String(value).replace(/[\[\]"]/g, "").trim()];
-      }
-    };
+    /* =======================================================
+       FETCH PRODUCTS
+    ======================================================= */
 
-    const normalize = (value) =>
-      String(value || "").trim().toLowerCase();
+    let query =
+      supabase
+        .from(
+          "products"
+        )
+        .select("*")
+        .eq(
+          "status",
+          "ACTIVE"
+        )
+        .eq(
+          "published",
+          true
+        );
 
-    const toList = (value) =>
-      (Array.isArray(value) ? value : String(value || "").split(","))
-        .map((item) => String(item).trim())
-        .filter(Boolean);
 
-    const sortAlpha = (values) =>
-      values.sort((a, b) =>
-        a.localeCompare(b, undefined, { sensitivity: "base" })
-      );
+    /* -------------------------------------------------------
+       COLLECTION
+    ------------------------------------------------------- */
 
-   const variantIsAvailable = (variant) =>
-  Number(variant?.inventory_quantity || 0) > 0;
-
-    // A product with variants is in stock only if at least one variant is in stock.
-    // A product without variants uses its own inventory quantity.
-    const productIsInStock = (product) => {
-      const variants = safeParse(product.variants);
-
-      if (variants.length) {
-        return variants.some(variantIsAvailable);
-      }
-
-      return Number(product.inventory_quantity) > 0;
-    };
-
-    /* ================= FETCH PRODUCTS ================= */
-
-    let query = supabase
-      .from("products")
-      .select("*")
-      .eq("status", "ACTIVE")
-      .eq("published", true);
-
-    if (normalizedCollection && normalizedCollection !== "all") {
-      query = query.filter(
-        "collection_handle",
-        "cs",
-        `["${normalizedCollection}"]`
-      );
+    if (
+      normalizedCollection &&
+      normalizedCollection !==
+        "all"
+    ) {
+      query =
+        query.filter(
+          "collection_handle",
+          "cs",
+          `["${normalizedCollection}"]`
+        );
     }
 
-    const { data: allProducts, error } = await query;
+
+    const {
+      data:
+        allProducts,
+      error
+    } =
+      await query;
+
 
     if (error) {
-      return res.status(500).json({ error: error.message });
+      console.error(
+        "Supabase error:",
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            error.message
+        });
     }
 
-    if (!allProducts?.length) {
-      return res.status(200).json({
-        filters: {},
-        products: [],
-        pagination: {
-          total: 0,
-          totalPages: 0,
-          currentPage: 1
-        }
-      });
+
+    if (
+      !allProducts ||
+      !allProducts.length
+    ) {
+      return res
+        .status(200)
+        .json({
+          filters: {
+            vendors: [],
+            productTypes: [],
+            colors: [],
+            fabrics: [],
+            delivery_timeline:
+              [],
+            sizes: [],
+
+            priceRange: {
+              min: 0,
+              max: 0
+            }
+          },
+
+          products: [],
+
+          pagination: {
+            total: 0,
+            totalPages: 0,
+            currentPage: 1
+          }
+        });
     }
 
-    /* ================= APPLY FILTERS ================= */
 
-    let products = [...allProducts];
+    /* =======================================================
+       HIDE OUT-OF-STOCK FIRST
 
-    // Designer
+       This ensures filters are based only on products
+       that can actually be purchased.
+    ======================================================= */
+
+    const inStockProducts =
+      allProducts.filter(
+        productIsInStock
+      );
+
+
+    let products = [
+      ...inStockProducts
+    ];
+
+
+    /* =======================================================
+       DESIGNER / VENDOR
+    ======================================================= */
+
     if (vendor) {
-      const selectedVendors = toList(vendor).map(normalize);
+      const selectedVendors =
+        toList(vendor);
 
-      products = products.filter((product) =>
-        selectedVendors.includes(normalize(product.vendor))
-      );
-    }
-
-    // Product type
-    if (product_type) {
-      const selectedTypes = toList(product_type).map(normalize);
-
-      products = products.filter((product) =>
-        selectedTypes.includes(normalize(product.product_type))
-      );
-    }
-
-    // Fabric
-    if (fabric) {
-      const selectedFabrics = toList(fabric).map(normalize);
-
-      products = products.filter((product) => {
-        const productFabrics = safeParse(product.fabric).map(normalize);
-
-        return selectedFabrics.some((selectedFabric) =>
-          productFabrics.includes(selectedFabric)
-        );
-      });
-    }
-
-    // Price
-    if (minPrice || maxPrice) {
-      products = products.filter((product) => {
-        const price = Number(product.price || 0);
-
-        if (minPrice && price < Number(minPrice)) return false;
-        if (maxPrice && price > Number(maxPrice)) return false;
-
-        return true;
-      });
-    }
-
-    // Color
-    if (color) {
-      const selectedColors = toList(color).map(normalize);
-
-      products = products.filter((product) => {
-        const productColors = safeParse(product.color).map(normalize);
-
-        const variantColors = safeParse(product.variants).map((variant) =>
-          normalize(variant?.color)
-        );
-
-        return selectedColors.some(
-          (selectedColor) =>
-            productColors.some((productColor) =>
-              productColor.includes(selectedColor)
-            ) ||
-            variantColors.some((variantColor) =>
-              variantColor.includes(selectedColor)
+      products =
+        products.filter(
+          (product) =>
+            selectedVendors.some(
+              (selected) =>
+                exactMatch(
+                  product.vendor,
+                  selected
+                )
             )
         );
-      });
     }
 
-    // Size
-    if (size) {
-      const selectedSizes = toList(size).map(normalize);
 
-      products = products.filter((product) =>
-        safeParse(product.variants).some(
-          (variant) =>
-            selectedSizes.includes(normalize(variant?.size)) &&
-            variantIsAvailable(variant)
-        )
-      );
-    }
+    /* =======================================================
+       PRODUCT TYPE
+    ======================================================= */
 
-    // Delivery timeline
-    if (delivery_timeline) {
-      const selectedDeliveryTimes = toList(delivery_timeline).map(normalize);
-
-      products = products.filter((product) => {
-        const productDeliveryTimes = safeParse(
-          product.delivery_timeline
-        ).map(normalize);
-
-        return selectedDeliveryTimes.some((selectedTime) =>
-          productDeliveryTimes.includes(selectedTime)
+    if (
+      product_type
+    ) {
+      const selectedTypes =
+        toList(
+          product_type
         );
-      });
+
+      products =
+        products.filter(
+          (product) =>
+            selectedTypes.some(
+              (selected) =>
+                exactMatch(
+                  product
+                    .product_type,
+                  selected
+                )
+            )
+        );
     }
 
-    /* ================= HIDE OUT-OF-STOCK PRODUCTS ================= */
 
-    products = products.filter(productIsInStock);
+    /* =======================================================
+       FABRIC
+    ======================================================= */
 
-    // Filter choices now also contain only in-stock products.
-    const filterSource = [...products];
+    if (fabric) {
+      const selectedFabrics =
+        toList(fabric);
 
-    /* ================= FORMAT PRODUCTS ================= */
+      products =
+        products.filter(
+          (product) => {
 
-    let formattedProducts = products.map((product) => ({
-      ...product,
-      price: Number(product.price || 0),
-      compare_at_price: Number(
-        product.compare_at_price ||
-          product.compareAtPrice ||
-          product.mrp ||
-          0
-      )
-    }));
+            const productFabrics =
+              safeParse(
+                product.fabric
+              );
 
-    /* ================= SORT ================= */
+            return (
+              selectedFabrics.some(
+                (selected) =>
+                  productFabrics.some(
+                    (item) =>
+                      exactMatch(
+                        item,
+                        selected
+                      )
+                  )
+              )
+            );
+          }
+        );
+    }
+
+
+    /* =======================================================
+       PRICE
+    ======================================================= */
+
+    if (
+      minPrice !==
+        undefined ||
+      maxPrice !==
+        undefined
+    ) {
+      const minimum =
+        minPrice !==
+          undefined &&
+        minPrice !==
+          ""
+          ? Number(
+              minPrice
+            )
+          : null;
+
+      const maximum =
+        maxPrice !==
+          undefined &&
+        maxPrice !==
+          ""
+          ? Number(
+              maxPrice
+            )
+          : null;
+
+
+      products =
+        products.filter(
+          (product) => {
+
+            const price =
+              Number(
+                product.price ||
+                0
+              );
+
+            if (
+              minimum !==
+                null &&
+              Number.isFinite(
+                minimum
+              ) &&
+              price <
+                minimum
+            ) {
+              return false;
+            }
+
+            if (
+              maximum !==
+                null &&
+              Number.isFinite(
+                maximum
+              ) &&
+              price >
+                maximum
+            ) {
+              return false;
+            }
+
+            return true;
+          }
+        );
+    }
+
+
+    /* =======================================================
+       COLOR
+
+       Searches all product + variant colors.
+    ======================================================= */
+
+    if (color) {
+      const selectedColors =
+        toList(color);
+
+      products =
+        products.filter(
+          (product) => {
+
+            const productColors =
+              getProductColors(
+                product
+              );
+
+            return (
+              selectedColors.some(
+                (selected) =>
+                  productColors.some(
+                    (productColor) =>
+                      colorMatch(
+                        productColor,
+                        selected
+                      )
+                  )
+              )
+            );
+          }
+        );
+    }
+
+
+    /* =======================================================
+       SIZE
+
+       IMPORTANT:
+       Size must exist on an IN-STOCK variant.
+    ======================================================= */
+
+    if (size) {
+      const selectedSizes =
+        toList(size);
+
+      products =
+        products.filter(
+          (product) => {
+
+            const variants =
+              getVariants(
+                product
+              );
+
+            return (
+              variants.some(
+                (variant) => {
+
+                  if (
+                    !variantIsAvailable(
+                      variant
+                    )
+                  ) {
+                    return false;
+                  }
+
+                  const variantSize =
+                    getVariantOption(
+                      variant,
+                      ["size"]
+                    );
+
+                  return (
+                    selectedSizes.some(
+                      (selected) =>
+                        exactMatch(
+                          variantSize,
+                          selected
+                        )
+                    )
+                  );
+                }
+              )
+            );
+          }
+        );
+    }
+
+
+    /* =======================================================
+       DELIVERY TIMELINE
+    ======================================================= */
+
+    if (
+      delivery_timeline
+    ) {
+      const selectedDeliveryTimes =
+        toList(
+          delivery_timeline
+        );
+
+      products =
+        products.filter(
+          (product) => {
+
+            const productDeliveryTimes =
+              safeParse(
+                product
+                  .delivery_timeline
+              );
+
+            return (
+              selectedDeliveryTimes.some(
+                (selected) =>
+                  productDeliveryTimes.some(
+                    (item) =>
+                      exactMatch(
+                        item,
+                        selected
+                      )
+                  )
+              )
+            );
+          }
+        );
+    }
+
+
+    /* =======================================================
+       FILTER SOURCE
+
+       Filter options now correspond to the current result
+       set after active filters.
+    ======================================================= */
+
+    const filterSource = [
+      ...products
+    ];
+
+
+    /* =======================================================
+       FORMAT PRODUCTS
+    ======================================================= */
+
+    let formattedProducts =
+      products.map(
+        (product) => ({
+          ...product,
+
+          price:
+            Number(
+              product.price ||
+              0
+            ),
+
+          compare_at_price:
+            Number(
+              product
+                .compare_at_price ||
+              product
+                .compareAtPrice ||
+              product.mrp ||
+              0
+            ),
+
+          /*
+           * Return normalized combined colors too.
+           */
+
+          color:
+            getProductColors(
+              product
+            )
+        })
+      );
+
+
+    /* =======================================================
+       SORT
+    ======================================================= */
 
     const sortMap = {
-      manual: (a, b) => Number(a.position || 0) - Number(b.position || 0),
-      "price-ascending": (a, b) => a.price - b.price,
-      "price-descending": (a, b) => b.price - a.price,
-      "title-ascending": (a, b) =>
-        String(a.title || "").localeCompare(String(b.title || "")),
-      "title-descending": (a, b) =>
-        String(b.title || "").localeCompare(String(a.title || "")),
-      "created-descending": (a, b) =>
-        new Date(b.created_at) - new Date(a.created_at),
-      "created-ascending": (a, b) =>
-        new Date(a.created_at) - new Date(b.created_at)
+
+      manual:
+        (a, b) =>
+          Number(
+            a.position ??
+            9999
+          ) -
+          Number(
+            b.position ??
+            9999
+          ),
+
+
+      "price-ascending":
+        (a, b) =>
+          a.price -
+          b.price,
+
+
+      "price-descending":
+        (a, b) =>
+          b.price -
+          a.price,
+
+
+      "title-ascending":
+        (a, b) =>
+          String(
+            a.title ||
+            ""
+          ).localeCompare(
+            String(
+              b.title ||
+              ""
+            ),
+            undefined,
+            {
+              sensitivity:
+                "base"
+            }
+          ),
+
+
+      "title-descending":
+        (a, b) =>
+          String(
+            b.title ||
+            ""
+          ).localeCompare(
+            String(
+              a.title ||
+              ""
+            ),
+            undefined,
+            {
+              sensitivity:
+                "base"
+            }
+          ),
+
+
+      "created-descending":
+        (a, b) =>
+          new Date(
+            b.created_at ||
+            0
+          ) -
+          new Date(
+            a.created_at ||
+            0
+          ),
+
+
+      "created-ascending":
+        (a, b) =>
+          new Date(
+            a.created_at ||
+            0
+          ) -
+          new Date(
+            b.created_at ||
+            0
+          ),
+
+
+      "best-selling":
+        (a, b) =>
+          Number(
+            a
+              .best_selling_rank ??
+            999999
+          ) -
+          Number(
+            b
+              .best_selling_rank ??
+            999999
+          )
     };
+
 
     if (!sort_by) {
       formattedProducts.sort(
-        (a, b) => new Date(b.created_at) - new Date(a.created_at)
+        sortMap[
+          "created-descending"
+        ]
       );
     } else {
-      formattedProducts.sort(sortMap[sort_by] || (() => 0));
+      formattedProducts.sort(
+        sortMap[
+          sort_by
+        ] ||
+        (() => 0)
+      );
     }
 
-    /* ================= PAGINATION ================= */
 
-    const currentPage = Math.max(1, Number(page) || 1);
+    /* =======================================================
+       PAGINATION
+    ======================================================= */
+
+    const currentPage =
+      Math.max(
+        1,
+        Number(page) ||
+        1
+      );
+
     const limit = 12;
-    const total = formattedProducts.length;
-    const totalPages = Math.max(1, Math.ceil(total / limit));
 
-    const paginatedProducts = formattedProducts.slice(
-      (currentPage - 1) * limit,
-      currentPage * limit
+    const total =
+      formattedProducts.length;
+
+    const totalPages =
+      total
+        ? Math.ceil(
+            total /
+            limit
+          )
+        : 0;
+
+
+    const startIndex =
+      (
+        currentPage -
+        1
+      ) *
+      limit;
+
+
+    const paginatedProducts =
+      formattedProducts.slice(
+        startIndex,
+        startIndex +
+          limit
+      );
+
+
+    /* =======================================================
+       BUILD FILTERS
+    ======================================================= */
+
+    const vendorSet =
+      new Set();
+
+    const typeSet =
+      new Set();
+
+    const colorValues =
+      [];
+
+    const fabricSet =
+      new Set();
+
+    const deliverySet =
+      new Set();
+
+    const sizeMap =
+      new Map();
+
+
+    filterSource.forEach(
+      (product) => {
+
+
+        /* ---------------------------------------------------
+           VENDOR
+        --------------------------------------------------- */
+
+        if (
+          product.vendor
+        ) {
+          vendorSet.add(
+            String(
+              product.vendor
+            ).trim()
+          );
+        }
+
+
+        /* ---------------------------------------------------
+           PRODUCT TYPE
+        --------------------------------------------------- */
+
+        if (
+          product
+            .product_type
+        ) {
+          typeSet.add(
+            String(
+              product
+                .product_type
+            ).trim()
+          );
+        }
+
+
+        /* ---------------------------------------------------
+           COLORS
+
+           Get ALL colors from:
+           product.color + variants.
+        --------------------------------------------------- */
+
+        const productColors =
+          getProductColors(
+            product
+          );
+
+        colorValues.push(
+          ...productColors
+        );
+
+
+        /* ---------------------------------------------------
+           FABRIC
+        --------------------------------------------------- */
+
+        safeParse(
+          product.fabric
+        ).forEach(
+          (item) => {
+
+            const value =
+              String(
+                item ||
+                ""
+              ).trim();
+
+            if (value) {
+              fabricSet.add(
+                value
+              );
+            }
+          }
+        );
+
+
+        /* ---------------------------------------------------
+           DELIVERY
+        --------------------------------------------------- */
+
+        safeParse(
+          product
+            .delivery_timeline
+        ).forEach(
+          (item) => {
+
+            const value =
+              String(
+                item ||
+                ""
+              ).trim();
+
+            if (value) {
+              deliverySet.add(
+                value
+              );
+            }
+          }
+        );
+
+
+        /* ---------------------------------------------------
+           SIZE
+
+           Only add sizes that exist in variants.
+
+           available tells frontend whether any variant
+           for that size has inventory.
+        --------------------------------------------------- */
+
+        const variants =
+          getVariants(
+            product
+          );
+
+        for (
+          const variant
+          of variants
+        ) {
+          const variantSize =
+            getVariantOption(
+              variant,
+              ["size"]
+            );
+
+          if (
+            !variantSize
+          ) {
+            continue;
+          }
+
+          const normalizedSize =
+            normalize(
+              variantSize
+            );
+
+          if (
+            !sizeMap.has(
+              normalizedSize
+            )
+          ) {
+            sizeMap.set(
+              normalizedSize,
+              {
+                name:
+                  variantSize,
+
+                available:
+                  false
+              }
+            );
+          }
+
+          if (
+            variantIsAvailable(
+              variant
+            )
+          ) {
+            sizeMap.get(
+              normalizedSize
+            ).available =
+              true;
+          }
+        }
+      }
     );
 
-    /* ================= BUILD FILTERS ================= */
 
-    const vendorSet = new Set();
-    const typeSet = new Set();
-    const colorSet = new Set();
-    const fabricSet = new Set();
-    const deliverySet = new Set();
-    const sizeAvailability = {};
+    /* =======================================================
+       DEDUPLICATE COLORS
+    ======================================================= */
 
-    filterSource.forEach((product) => {
-      if (product.vendor) {
-        vendorSet.add(String(product.vendor).trim());
-      }
+    const colors =
+      uniqueValues(
+        colorValues
+          .map(
+            standardizeColor
+          )
+          .filter(Boolean)
+      );
 
-      if (product.product_type) {
-        typeSet.add(String(product.product_type).trim());
-      }
 
-      safeParse(product.color).forEach((item) => {
-        if (item) colorSet.add(String(item).trim());
-      });
+    /* =======================================================
+       OTHER FILTER VALUES
+    ======================================================= */
 
-      safeParse(product.fabric).forEach((item) => {
-        if (item) fabricSet.add(String(item).trim());
-      });
+    const vendors =
+      uniqueValues([
+        ...vendorSet
+      ]);
 
-      safeParse(product.delivery_timeline).forEach((item) => {
-        if (item) deliverySet.add(String(item).trim());
-      });
+    const productTypes =
+      uniqueValues([
+        ...typeSet
+      ]);
 
-      safeParse(product.variants).forEach((variant) => {
-        const variantSize = String(variant?.size || "").trim();
+    const fabrics =
+      uniqueValues([
+        ...fabricSet
+      ]);
 
-        if (!variantSize) return;
+    const delivery =
+      uniqueValues([
+        ...deliverySet
+      ]);
 
-        if (!(variantSize in sizeAvailability)) {
-          sizeAvailability[variantSize] = false;
+    const sizes =
+      [
+        ...sizeMap.values()
+      ];
+
+
+    /* =======================================================
+       PRICE RANGE
+    ======================================================= */
+
+    const prices =
+      formattedProducts
+        .map(
+          (product) =>
+            Number(
+              product.price
+            )
+        )
+        .filter(
+          (price) =>
+            Number.isFinite(
+              price
+            )
+        );
+
+
+    /* =======================================================
+       RESPONSE
+    ======================================================= */
+
+    return res
+      .status(200)
+      .json({
+
+        filters: {
+
+          vendors:
+            vendors.length >
+              1
+              ? sortAlpha(
+                  vendors
+                ).map(
+                  (name) => ({
+                    name
+                  })
+                )
+              : [],
+
+
+          productTypes:
+            productTypes.length >
+              1
+              ? sortAlpha(
+                  productTypes
+                ).map(
+                  (name) => ({
+                    name
+                  })
+                )
+              : [],
+
+
+          colors:
+            colors.length >
+              1
+              ? sortAlpha(
+                  colors
+                ).map(
+                  (name) => ({
+                    name
+                  })
+                )
+              : [],
+
+
+          fabrics:
+            fabrics.length >
+              1
+              ? sortAlpha(
+                  fabrics
+                )
+              : [],
+
+
+          delivery_timeline:
+            delivery.length >
+              1
+              ? sortAlpha(
+                  delivery
+                )
+              : [],
+
+
+          sizes:
+            sizes.length >
+              1
+              ? sizes
+                  .sort(
+                    (a, b) =>
+                      String(
+                        a.name
+                      ).localeCompare(
+                        String(
+                          b.name
+                        ),
+                        undefined,
+                        {
+                          sensitivity:
+                            "base",
+                          numeric:
+                            true
+                        }
+                      )
+                  )
+              : [],
+
+
+          priceRange: {
+            min:
+              prices.length
+                ? Math.min(
+                    ...prices
+                  )
+                : 0,
+
+            max:
+              prices.length
+                ? Math.max(
+                    ...prices
+                  )
+                : 0
+          }
+        },
+
+
+        products:
+          paginatedProducts,
+
+
+        pagination: {
+          total,
+
+          totalPages,
+
+          currentPage,
+
+          limit
         }
-
-        if (variantIsAvailable(variant)) {
-          sizeAvailability[variantSize] = true;
-        }
       });
-    });
 
-    const vendors = [...vendorSet];
-    const productTypes = [...typeSet];
-    const colors = [...colorSet];
-    const fabrics = [...fabricSet];
-    const delivery = [...deliverySet];
-    const sizes = Object.keys(sizeAvailability);
-    const prices = formattedProducts.map((product) => product.price);
-
-    return res.status(200).json({
-      filters: {
-        vendors:
-          vendors.length > 1
-            ? sortAlpha(vendors).map((name) => ({ name }))
-            : [],
-
-        productTypes:
-          productTypes.length > 1
-            ? sortAlpha(productTypes).map((name) => ({ name }))
-            : [],
-
-        colors:
-          colors.length > 1
-            ? sortAlpha(colors).map((name) => ({ name }))
-            : [],
-
-        fabrics: fabrics.length > 1 ? sortAlpha(fabrics) : [],
-
-        delivery_timeline: delivery.length > 1 ? sortAlpha(delivery) : [],
-
-        sizes:
-          sizes.length > 1
-            ? sortAlpha(sizes).map((name) => ({
-                name,
-                available: sizeAvailability[name]
-              }))
-            : [],
-
-        priceRange: {
-          min: prices.length ? Math.min(...prices) : 0,
-          max: prices.length ? Math.max(...prices) : 0
-        }
-      },
-
-      products: paginatedProducts,
-
-      pagination: {
-        total,
-        totalPages,
-        currentPage
-      }
-    });
   } catch (error) {
-    console.error("API ERROR:", error);
 
-    return res.status(500).json({
-      error: error.message || "Server error"
-    });
+    console.error(
+      "API ERROR:",
+      error
+    );
+
+    return res
+      .status(500)
+      .json({
+        error:
+          error.message ||
+          "Server error"
+      });
   }
 }

@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
-    "@supabase/supabase-js": "^2.78.0",
+    "@supabase/supabase-js": "^2.112.1",
+    "dotenv": "^17.4.2",
     "node-fetch": "^3.3.2"
   },
   "main": "sync.js",
