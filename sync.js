@@ -252,9 +252,26 @@ async function syncProducts() {
               status
               createdAt
               publishedAt
-              metafields(first: 20) {
-                edges { node { key value namespace } }
-              }
+             metafields(first: 50) {
+  edges {
+    node {
+      namespace
+      key
+      type
+      value
+      reference {
+        ... on Metaobject {
+          type
+          displayName
+          fields {
+            key
+            value
+          }
+        }
+      }
+    }
+  }
+}
               collections(first: 250) {
                 edges { node { id handle } }
               }
@@ -327,6 +344,14 @@ async function syncProducts() {
       0
     );
     const metafields = node.metafields?.edges || [];
+    const colorMetaobject = metafields
+  .map(({ node: metafield }) => metafield.reference)
+  .find(
+    (reference) =>
+      reference?.type === "shopify--color-pattern"
+  );
+
+const metaobjectColor = colorMetaobject?.displayName || null;
     const deliveryTimeline = metafields.find(
       ({ node: metafield }) =>
         metafield.namespace === "custom" && metafield.key === "delivery_time"
