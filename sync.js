@@ -8,6 +8,17 @@ const API_VERSION = "2026-07";
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function logSyncStatus(status, details = {}) {
+  console.log(
+    JSON.stringify({
+      service: "shopify-sync",
+      status,
+      at: new Date().toISOString(),
+      ...details
+    })
+  );
+}
+
 const requiredEnv = (name) => {
   const value = process.env[name];
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
@@ -33,6 +44,8 @@ function tokenIsUsable(token) {
 }
 
 async function requestNewAccessToken() {
+  logSyncStatus("REFRESHING_ACCESS_TOKEN");
+
   const response = await fetch(
     `https://${SHOP}/admin/oauth/access_token`,
     {
@@ -76,6 +89,7 @@ async function requestNewAccessToken() {
   }
 
   inMemoryToken = token;
+  logSyncStatus("ACCESS_TOKEN_REFRESHED", { expiresAt });
   return token.access_token;
 }
 
@@ -231,13 +245,46 @@ function optionValue(selectedOptions, names) {
   return option?.value || null;
 }
 
+function standardizeColorLabel(value) {
+  const label = String(value || "").trim();
+  const comparable = label.toLowerCase().replace(/[\s_-]/g, "");
+
+  if (["multi", "multicolor", "multicolour"].includes(comparable)) {
+    return "Multicolour";
+  }
+
+  return label || null;
+}
+
+function getMetaobjectColors(metafields) {
+  const metaobjects = metafields.flatMap(({ node: metafield }) => [
+    metafield.reference,
+    ...(metafield.references?.edges || []).map(({ node }) => node)
+  ]);
+
+  return [
+    ...new Set(
+      metaobjects
+        .filter(
+          (metaobject) => metaobject?.type === "shopify--color-pattern"
+        )
+        .map((metaobject) => standardizeColorLabel(metaobject.displayName))
+        .filter(Boolean)
+    )
+  ];
+}
+
 async function syncProducts() {
   const allProducts = [];
   const collectionIds = new Set();
   let cursor = null;
   let hasNextPage = true;
+  let page = 0;
+
+  logSyncStatus("FETCHING_PRODUCTS");
 
   while (hasNextPage) {
+    page += 1;
     const data = await shopifyGraphQL(`
       {
         products(first: 250${cursor ? `, after: "${cursor}"` : ""}) {
@@ -252,26 +299,34 @@ async function syncProducts() {
               status
               createdAt
               publishedAt
-             metafields(first: 50) {
-  edges {
-    node {
-      namespace
-      key
-      type
-      value
-      reference {
-        ... on Metaobject {
-          type
-          displayName
-          fields {
-            key
-            value
-          }
-        }
-      }
-    }
-  }
-}
+              metafields(first: 50) {
+                edges {
+                  node {
+                    namespace
+                    key
+                    type
+                    value
+                    reference {
+                      ... on Metaobject {
+                        type
+                        displayName
+                        fields { key value }
+                      }
+                    }
+                    references(first: 50) {
+                      edges {
+                        node {
+                          ... on Metaobject {
+                            type
+                            displayName
+                            fields { key value }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
               collections(first: 250) {
                 edges { node { id handle } }
               }
@@ -307,6 +362,12 @@ async function syncProducts() {
       allProducts.push({ node, collections });
     }
 
+    logSyncStatus("PRODUCT_PAGE_FETCHED", {
+      page,
+      productsOnPage: products.edges.length,
+      totalProductsFetched: allProducts.length
+    });
+
     hasNextPage = products.pageInfo.hasNextPage;
     cursor = products.pageInfo.endCursor;
     await sleep(200);
@@ -316,6 +377,11 @@ async function syncProducts() {
     fetchAllCollects([...collectionIds]),
     fetchBestSelling()
   ]);
+
+  logSyncStatus("PROCESSING_PRODUCTS", {
+    products: allProducts.length,
+    collections: collectionIds.size
+  });
 
   const rows = allProducts.map(({ node, collections }) => {
     const productId = node.id.split("/").pop();
@@ -338,20 +404,19 @@ async function syncProducts() {
       };
     });
 
-    const colors = [...new Set(variants.map((variant) => variant.color).filter(Boolean))];
+    const variantColors = [
+      ...new Set(
+        variants
+          .map((variant) => standardizeColorLabel(variant.color))
+          .filter(Boolean)
+      )
+    ];
     const inventoryQuantity = variants.reduce(
       (sum, variant) => sum + variant.inventory_quantity,
       0
     );
     const metafields = node.metafields?.edges || [];
-    const colorMetaobject = metafields
-  .map(({ node: metafield }) => metafield.reference)
-  .find(
-    (reference) =>
-      reference?.type === "shopify--color-pattern"
-  );
-
-const metaobjectColor = colorMetaobject?.displayName || null;
+    const metaobjectColors = getMetaobjectColors(metafields);
     const deliveryTimeline = metafields.find(
       ({ node: metafield }) =>
         metafield.namespace === "custom" && metafield.key === "delivery_time"
@@ -370,7 +435,8 @@ const metaobjectColor = colorMetaobject?.displayName || null;
       images: node.images.edges.map(({ node: image }) => image.url),
       image: node.images.edges[0]?.node.url || null,
       image2: node.images.edges[1]?.node.url || null,
-      color: colors,
+      // Prefer Color metaobject values; fall back to the variant Color option.
+      color: metaobjectColors.length ? metaobjectColors : variantColors,
       variants,
       inventory_quantity: inventoryQuantity,
       status: node.status,
@@ -382,6 +448,13 @@ const metaobjectColor = colorMetaobject?.displayName || null;
   });
 
   for (let index = 0; index < rows.length; index += 500) {
+    const batchNumber = index / 500 + 1;
+
+    logSyncStatus("UPLOADING_BATCH", {
+      batch: batchNumber,
+      batchSize: Math.min(500, rows.length - index)
+    });
+
     const { error } = await supabase
       .from("products")
       .upsert(rows.slice(index, index + 500), { onConflict: "id" });
@@ -389,7 +462,14 @@ const metaobjectColor = colorMetaobject?.displayName || null;
     if (error) throw new Error(`Supabase upsert failed: ${error.message}`);
   }
 
-  return rows.length;
+  const lastUpdatedAt = new Date().toISOString();
+
+  logSyncStatus("SYNC_COMPLETED", {
+    syncedProducts: rows.length,
+    lastUpdatedAt
+  });
+
+  return { syncedProducts: rows.length, lastUpdatedAt };
 }
 
 export default async function handler(req, res) {
@@ -409,15 +489,18 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const syncedProducts = await syncProducts();
+    logSyncStatus("SYNC_STARTED");
+
+    const result = await syncProducts();
 
     res.setHeader("Cache-Control", "no-store");
     return res.status(200).json({
       ok: true,
-      syncedProducts,
-      completedAt: new Date().toISOString()
+      status: "SYNC_COMPLETED",
+      ...result
     });
   } catch (error) {
+    logSyncStatus("SYNC_FAILED", { error: error.message });
     console.error("Shopify sync failed:", error.message);
     return res.status(500).json({
       ok: false,
