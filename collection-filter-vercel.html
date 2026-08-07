@@ -1,0 +1,617 @@
+{%- assign st = section.settings -%}
+{%- assign total_active_values = 0 -%}
+
+<collection-filters-form>
+  <form id="CollectionFiltersForm">
+    {%- if st.show_sorting -%}
+      <div class="hidden" data-form-sorting>
+        {% render 'collection-filters-sort-by' %}
+      </div>
+    {%- endif -%}
+
+    <div id="custom-filters"></div>
+
+    <div class="filter-actions">
+      <button type="button" id="clear-filters-btn" class="btn btn-outline-primary">Clear All</button>
+      <button type="button" id="apply-filters-btn" class="btn btn-primary">Apply Filters</button>
+    </div>
+
+    {%- if collection.current_vendor or collection.current_type -%}
+      <input
+        type="hidden"
+        name="filter.p.m.custom.designer"
+        value="{{ collection.current_vendor }}{{ collection.current_type }}"
+      >
+    {%- endif -%}
+  </form>
+</collection-filters-form>
+<script>
+const CURRENT_COLLECTION = "{{ collection.handle }}";
+const API_BASE = "https://custom-filter.vercel.app/api/filter.js";
+
+document.addEventListener("DOMContentLoaded", () => {
+  loadFilters();
+  initApplyAndClear();
+});
+
+/* ================= LOAD FILTERS ================= */
+
+async function loadFilters() {
+  try {
+    const res = await fetch(
+      API_BASE + "?collection=" + CURRENT_COLLECTION
+    );
+    const data = await res.json();
+    if (!data || !data.filters) {
+      console.error("Invalid API response", data);
+      return;
+    }
+    renderFilters(data.filters);
+
+    // IMPORTANT → load state AFTER filters render
+    loadStateFromURL();
+
+  } catch (err) {
+    console.error("Load filter error:", err);
+  }
+}
+
+/* ================= RENDER FILTERS ================= */
+
+function renderFilters(filters) {
+  const container = document.getElementById("custom-filters");
+
+  let html = `<div class="filter-wrapper">
+      <h2 class="filter-title">Filters</h2>`;
+
+  if (filters.priceRange)
+    html += createAccordion("Price", renderPrice(filters.priceRange));
+
+  if (filters.productTypes)
+    html += createAccordion("Product type", renderCheckbox("productType", filters.productTypes));
+
+  if (filters.vendors)
+    html += createAccordion("Designer", renderCheckbox("vendor", filters.vendors));
+
+  if (filters.colors)
+    html += createAccordion("Color", renderCheckbox("color", filters.colors));
+
+  if (filters.sizes)
+    html += createAccordion("Size", renderCheckbox("size", filters.sizes));
+
+  if (filters.fabrics)
+    html += createAccordion("Fabric", renderCheckbox("fabric", filters.fabrics));
+
+  if (filters.deliveryTimes)
+    html += createAccordion("Delivery Time", renderCheckbox("deliveryTime", filters.deliveryTimes));
+
+  html += `</div>`;
+
+  container.innerHTML = html;
+
+  initPriceSlider(filters.priceRange);
+}
+function renderCheckbox(type, values) {
+  if (!values || values.length === 0) {
+    return `<p style="color:#999;font-size:13px;">No options</p>`;
+  }
+
+  return `
+    <div class="designer-scroll">
+      ${values
+        .map(
+          (v) => `
+        <label class="filter-option">
+          <input type="checkbox" data-type="${type}" value="${v}">
+          <span>${v}</span>
+        </label>
+      `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+/* ================= APPLY & CLEAR ================= */
+
+function initApplyAndClear() {
+  const applyBtn = document.getElementById("apply-filters-btn");
+  const clearBtn = document.getElementById("clear-filters-btn");
+
+  if (applyBtn) {
+    applyBtn.addEventListener("click", async () => {
+      applyBtn.disabled = true;
+      applyBtn.textContent = "Applying...";
+
+      const params = collectFilterParams();
+
+      // Update URL
+      const newUrl =
+        window.location.pathname + "?" + params.toString();
+      window.history.pushState({}, "", newUrl);
+
+      await fetchAndRenderProducts(params);
+
+      applyBtn.disabled = false;
+      applyBtn.textContent = "Apply Filters";
+    });
+  }
+
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      window.history.pushState({}, "", window.location.pathname);
+      const originalGrid = document.querySelector(".sf__product-listing");
+      const customGrid = document.getElementById("custom-filter-results");
+
+      if (originalGrid) originalGrid.style.display = "";
+      if (customGrid) customGrid.classList.add("hidden");
+    });
+  }
+}
+
+/* ================= COLLECT FILTERS ================= */
+
+function collectFilterParams() {
+  const params = new URLSearchParams();
+
+  document
+    .querySelectorAll("#custom-filters input[type='checkbox']:checked")
+    .forEach((input) => {
+      params.append(input.dataset.type, input.value);
+    });
+
+  const minValue = document.querySelector(".price-min-input")?.value;
+  const maxValue = document.querySelector(".price-max-input")?.value;
+
+  if (minValue) params.append("minPrice", minValue);
+  if (maxValue) params.append("maxPrice", maxValue);
+
+  return params;
+}
+
+/* ================= FETCH PRODUCTS ================= */
+
+
+async function fetchAndRenderProducts(params) {
+
+ const grid = document.getElementById("custom-filter-results");
+
+  if (!grid) {
+    console.error("Grid not found");
+    return;
+  }
+
+  try {
+    const res = await fetch(
+      API_BASE +
+        "?collection=" +
+        CURRENT_COLLECTION +
+        "&" +
+        params.toString()
+    );
+
+    const data = await res.json();
+    const products = data.products || [];
+    grid.innerHTML = "";
+
+    products.forEach((product) => {
+
+      const item = document.createElement("div");
+      item.className = "sf__col-item w-6/12 md:w-4/12 px-2 xl:px-3";
+
+      item.innerHTML = `
+        <div class="mb-6">
+          <div class="sf__pcard cursor-pointer">
+            <a href="/products/${product.handle}">
+              <div class="sf__pcard-image">
+                <img 
+                  src="${product.image || ''}" 
+                  alt="${product.title || ''}" 
+                  loading="lazy"
+                />
+              </div>
+
+              <div class="sf__pcard-content">
+                <h3 class="sf__pcard-title">${product.title}</h3>
+                <p class="sf__pcard-vendor">${product.vendor || ''}</p>
+                <p class="sf__pcard-price">₹${product.price}</p>
+              </div>
+            </a>
+          </div>
+        </div>
+      `;
+
+      grid.appendChild(item);
+    });
+
+
+
+  } catch (err) {
+    console.error("Filter error:", err);
+  }
+}
+
+/* ================= LOAD STATE FROM URL ================= */
+function loadStateFromURL() {
+  const params = new URLSearchParams(window.location.search);
+
+  document
+    .querySelectorAll("#custom-filters input[type='checkbox']")
+    .forEach((checkbox) => {
+      const type = checkbox.dataset.type;
+      const values = params.getAll(type);
+
+      if (values.includes(checkbox.value)) {
+        checkbox.checked = true;
+      }
+    });
+
+  const min = params.get("minPrice");
+  const max = params.get("maxPrice");
+
+  if (min) {
+    const minInput = document.querySelector(".price-min-input");
+    const minRange = document.querySelector(".range-min");
+    if (minInput) minInput.value = min;
+    if (minRange) minRange.value = min;
+  }
+
+  if (max) {
+    const maxInput = document.querySelector(".price-max-input");
+    const maxRange = document.querySelector(".range-max");
+    if (maxInput) maxInput.value = max;
+    if (maxRange) maxRange.value = max;
+  }
+  const originalGrid = document.querySelector(".sf__product-listing");
+  const grid = document.getElementById("custom-filter-results");
+
+  if (originalGrid) {
+    originalGrid.style.display = "none";
+  }
+
+  if (grid) grid.classList.remove("hidden");
+
+  // Only fetch if URL has filters
+  if (params.toString()) {
+
+    fetchAndRenderProducts(params);
+  }
+}
+
+
+/* ================= DESIGNER ================= */
+
+
+
+/* ================= PRICE SLIDER ================= */
+
+function renderPrice(range) {
+  const min = range?.min || 0;
+  const max = range?.max || 0;
+
+  return `
+    <div class="price-slider-wrapper">
+      <div class="slider-track"></div>
+
+      <input type="range" min="${min}" max="${max}" value="${min}" class="range-min">
+      <input type="range" min="${min}" max="${max}" value="${max}" class="range-max">
+
+      <div class="price-inputs">
+        <input type="number" class="price-min-input" value="${min}">
+        <span>To</span>
+        <input type="number" class="price-max-input" value="${max}">
+      </div>
+    </div>
+  `;
+}
+
+function initPriceSlider(range) {
+  if (!range) return;
+
+  const min = range.min;
+  const max = range.max;
+
+  const minRange = document.querySelector(".range-min");
+  const maxRange = document.querySelector(".range-max");
+  const track = document.querySelector(".slider-track");
+  const minInput = document.querySelector(".price-min-input");
+  const maxInput = document.querySelector(".price-max-input");
+
+  function update() {
+    let minVal = parseInt(minRange.value);
+    let maxVal = parseInt(maxRange.value);
+
+    if (minVal >= maxVal) {
+      minVal = maxVal - 1;
+      minRange.value = minVal;
+    }
+
+    if (minVal < min) minVal = min;
+
+    // guard against division by zero when max === min
+    let percent1 = 0;
+    let percent2 = 100;
+    if (max > min) {
+      percent1 = ((minVal - min) / (max - min)) * 100;
+      percent2 = ((maxVal - min) / (max - min)) * 100;
+    }
+
+    track.style.left = percent1 + "%";
+    track.style.right = 100 - percent2 + "%";
+
+    if (minInput) minInput.value = minVal;
+    if (maxInput) maxInput.value = maxVal;
+  }
+
+  if (minRange) minRange.addEventListener("input", update);
+  if (maxRange) maxRange.addEventListener("input", update);
+
+  update();
+}
+
+/* ================= ACCORDION ================= */
+
+function createAccordion(title, content) {
+  return `
+    <div class="filter-item active">
+      <div class="filter-header">
+        <span>${title}</span>
+        <span class="chevron">⌄</span>
+      </div>
+      <div class="filter-content">
+        ${content}
+      </div>
+    </div>
+  `;
+}
+
+document.addEventListener("click", (e) => {
+  const header = e.target.closest(".filter-header");
+  if (!header) return;
+  header.parentElement.classList.toggle("active");
+});
+</script>
+
+
+<style>/* FILTER WRAPPER */
+.filter-wrapper {
+  padding: 30px 20px;
+  max-width: 320px;
+}
+
+/* TITLE */
+.filter-title {
+  font-size: 28px;
+  font-weight: 500;
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+/* SECTION */
+.filter-item {
+  border-bottom: 1px solid #e5e5e5;
+  padding: 20px 0;
+}
+
+/* HEADER */
+.filter-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 400;
+}
+
+/* CHEVRON */
+.chevron {
+  font-size: 14px;
+  transition: transform 0.3s ease;
+}
+
+.filter-item.active .chevron {
+  transform: rotate(180deg);
+}
+
+/* CONTENT */
+.filter-content {
+  margin-top: 15px;
+  display: none;
+}
+
+.filter-item.active .filter-content {
+  display: block;
+}
+
+/* CHECKBOX STYLE */
+.filter-option {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.filter-option input {
+  width: 16px;
+  height: 16px;
+  margin-right: 10px;
+  accent-color: #000;
+}
+
+/* PRICE INPUT */
+.price-range-ui {
+  display: flex;
+  gap: 10px;
+  margin-top: 15px;
+}
+
+.price-range-ui input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ddd;
+  background: #f7f7f7;
+  font-size: 14px;
+}
+
+/* DESIGNER SCROLL */
+.filter-content.scrollable {
+  max-height: 200px;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+/* SCROLLBAR */
+.filter-content.scrollable::-webkit-scrollbar {
+  width: 4px;
+}
+
+.filter-content.scrollable::-webkit-scrollbar-thumb {
+  background: #aaa;
+  border-radius: 10px;
+}
+
+/* BUTTONS */
+.filter-actions {
+  margin-top: 30px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.filter-actions button {
+  background: #1f2a2e;
+  color: white;
+  border: none;
+  padding: 12px 20px;
+  font-size: 13px;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+.filter-wrapper {
+  padding: 40px 25px;
+  max-width: 340px;
+}
+
+.filter-title {
+  font-size: 28px;
+  font-weight: 500;
+  text-align: center;
+  margin-bottom: 35px;
+}
+
+/* Accordion */
+.filter-item {
+  border-bottom: 1px solid #e6e6e6;
+  padding: 20px 0;
+}
+
+.filter-header {
+  display: flex;
+  justify-content: space-between;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.chevron {
+  transition: transform .3s ease;
+}
+
+.filter-item.active .chevron {
+  transform: rotate(180deg);
+}
+
+.filter-content {
+  display: none;
+  margin-top: 15px;
+}
+
+.filter-item.active .filter-content {
+  display: block;
+}
+
+/* Designer scroll */
+.designer-scroll {
+  max-height: 200px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.designer-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.designer-scroll::-webkit-scrollbar-thumb {
+  background: #999;
+  border-radius: 10px;
+}
+
+/* Checkbox */
+.filter-option {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.filter-option input {
+  width: 16px;
+  height: 16px;
+  margin-right: 10px;
+  accent-color: #000;
+}
+
+/* Price slider */
+.price-slider-wrapper {
+  position: relative;
+  height: 60px;
+}
+
+.price-slider-wrapper input[type="range"] {
+  position: absolute;
+  width: 100%;
+  -webkit-appearance: none;
+  background: none;
+   pointer-events: none;
+}
+
+.price-slider-wrapper input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 16px;
+  width: 16px;
+  background: #000;
+  border-radius: 50%;
+  cursor: pointer;
+  position: relative;
+  z-index: 2;
+    pointer-events: all;
+
+}
+
+.slider-track {
+  position: absolute;
+  height: 4px;
+  background: #000;
+  top: 18px;
+  border-radius: 3px;
+  left: 0;
+  right: 0;
+  z-index: 1;
+}
+
+
+.price-inputs {
+  margin-top: 40px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.price-inputs input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ddd;
+  background: #f7f7f7;
+  font-size: 14px;
+}
+
+</style>
