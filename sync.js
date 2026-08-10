@@ -86,7 +86,80 @@ function extractTag(tags, prefix) {
 
 async function syncProducts() {
   try {
-    const accessToken = await generateShopifyToken();
+    // const accessToken = await getShopifyAccessToken();
+    // =========================================================
+// GET TOKEN FROM SUPABASE (AUTO REFRESH)
+// =========================================================
+
+  // Read saved token
+  const { data: tokenRow, error } = await supabase
+    .from("shopify_token")
+    .select("*")
+    .eq("id", 1)
+    .single();
+
+  if (error && error.code !== "PGRST116") {
+    throw error;
+  }
+
+  const now = Date.now();
+
+  // Return existing token if still valid
+  if (
+    tokenRow &&
+    tokenRow.access_token &&
+    tokenRow.expires_at &&
+    new Date(tokenRow.expires_at).getTime() > now + 5 * 60 * 1000
+  ) {
+    console.log("Using cached Shopify token");
+    return tokenRow.access_token;
+  }
+
+  console.log("Generating new Shopify token...");
+
+  const response = await fetch(
+    `https://${SHOP}/admin/oauth/access_token`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+      }),
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(JSON.stringify(data));
+  }
+
+  const expiresAt = new Date(
+    Date.now() + (data.expires_in - 300) * 1000
+  ).toISOString();
+
+  await supabase
+    .from("shopify_token")
+    .upsert(
+      {
+        id: 1,
+        access_token: data.access_token,
+        expires_at: expiresAt,
+        updated_at: new Date().toISOString(),
+      },
+      {
+        onConflict: "id",
+      }
+    );
+
+  console.log("New Shopify token saved.");
+
+  return data.access_token;
+}
 
     console.log("Starting product sync...\n");
 
@@ -95,6 +168,7 @@ async function syncProducts() {
     let totalSynced = 0;
 
     while (hasNextPage) {
+      const accessToken = await getShopifyAccessToken();
       const query = `
         query GetProducts($cursor: String) {
           products(first: 250, after: $cursor) {
