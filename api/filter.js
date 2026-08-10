@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
-
+const METADATA_CACHE = new Map();
+const CACHE_TIME = 10 * 60 * 1000; // 10 minutes
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -10,102 +11,80 @@ const PRODUCT_COLUMNS = `
   title,
   handle,
   vendor,
-  product_type,
   price,
+  compare_at_price,
   image,
+  images,
+  product_type,
   color,
   size,
   fabric,
   delivery_time
 `;
 
-function getFirstQueryValue(value) {
-  if (Array.isArray(value)) {
-    return value[0];
-  }
+const PAGE_SIZE = 24;
 
+function first(value) {
+  if (Array.isArray(value)) return value[0];
   return value;
 }
 
-function getQueryValues(value) {
-  if (value === undefined || value === null) {
-    return [];
-  }
+function values(value) {
+  if (value === undefined || value === null) return [];
 
-  const values = Array.isArray(value) ? value : [value];
-
-  return values
-    .flatMap((item) => String(item).split(","))
-    .map((item) => item.trim())
+  return (Array.isArray(value) ? value : [value])
+    .flatMap(v => String(v).split(","))
+    .map(v => v.trim())
     .filter(Boolean);
 }
 
-function uniqueSorted(values) {
+function unique(values) {
   return [
     ...new Set(
       values
         .filter(Boolean)
-        .map((value) => String(value).trim())
-        .filter(Boolean)
-    ),
+        .map(v => String(v).trim())
+    )
   ].sort((a, b) => a.localeCompare(b));
 }
 
-function parseNumber(value, fieldName) {
-  const parsed = Number.parseFloat(
-    getFirstQueryValue(value)
-  );
+function numberValue(value, fallback = null) {
+  if (value === undefined || value === null || value === "")
+    return fallback;
 
-  if (!Number.isFinite(parsed)) {
-    throw new Error(`Invalid ${fieldName}`);
-  }
+  const n = Number(value);
 
-  return parsed;
+  return Number.isFinite(n)
+    ? n
+    : fallback;
 }
 
-function normalizeCollection(value) {
-  return String(value)
-    .trim()
-    .replace(/-/g, " ");
+function normalizeCollection(handle) {
+
+  if (!handle || handle === "all")
+    return null;
+
+  return String(handle)
+    .replace(/-/g, " ")
+    .trim();
 }
 
-function applyMultiValueFilter(query, column, value) {
-  const values = getQueryValues(value);
+function applyMultiFilter(query, column, value) {
 
-  if (values.length === 1) {
-    return query.eq(column, values[0]);
-  }
+  const list = values(value);
 
-  if (values.length > 1) {
-    return query.in(column, values);
-  }
+  if (!list.length)
+    return query;
 
-  return query;
-}
+  if (list.length === 1)
+return query.eq(column, list[0]);
 
-export default async function handler(req, res) {
-  res.setHeader(
-    "Access-Control-Allow-Origin",
-    "*"
-  );
+  return query.in(column, list);
+}export default async function handler(req, res) {
 
-  res.setHeader(
-    "Access-Control-Allow-Methods",
-    "GET,OPTIONS"
-  );
-
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Content-Type"
-  );
-
-  res.setHeader(
-    "Cache-Control",
-    "no-store, no-cache, must-revalidate, proxy-revalidate"
-  );
-
-  res.setHeader("Pragma", "no-cache");
-  res.setHeader("Expires", "0");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   if (req.method === "OPTIONS") {
     return res.status(200).json({ ok: true });
@@ -118,174 +97,346 @@ export default async function handler(req, res) {
   }
 
   try {
+const start = Date.now();
     const {
       collection,
-      minPrice,
-      maxPrice,
+      page,
+      sort_by,
+
       vendor,
       color,
       size,
+      fabric,
+      product_type,
+      delivery_timeline,
+
+      minPrice,
+      maxPrice,
+
     } = req.query;
 
-    if (!collection) {
-      return res.status(400).json({
-        error: "Collection required",
-      });
-    }
+    const currentPage =
+      Math.max(numberValue(page, 1), 1);
 
-    const normalizedCollection =
+    const from =
+      (currentPage - 1) * PAGE_SIZE;
+
+    const to =
+      from + PAGE_SIZE - 1;
+
+    const collectionName =
       normalizeCollection(collection);
 
-    /*
-      Fetch the collection products used to build
-      the filter labels and price range.
-    */
-    const {
-      data: allProducts,
-      error: metadataError,
-    } = await supabase
-      .from("products")
-      .select(PRODUCT_COLUMNS)
-      .ilike(
+    /* ======================================
+       BASE QUERY
+    ====================================== */
+
+let baseQuery = supabase
+  .from("products")
+  .select(`
+    vendor,
+    color,
+    size,
+    fabric,
+    delivery_time,
+    product_type,
+    price
+  `);
+
+    if (collectionName) {
+      baseQuery = baseQuery.ilike(
         "product_type",
-        normalizedCollection
-      )
-      .order("title", {
-        ascending: true,
-      });
-
-    if (metadataError) {
-      throw metadataError;
+        collectionName
+      );
     }
+    /* ======================================
+   LOAD FILTER METADATA
+====================================== */
 
-    if (!allProducts || allProducts.length === 0) {
-      return res.status(200).json({
-        filters: {
-          vendors: [],
-          colors: [],
-          sizes: [],
-          priceRange: {
-            min: 0,
-            max: 0,
-          },
-        },
-        products: [],
-      });
-    }
+let metaRows;
 
-    /*
-      Build filter labels.
-    */
-    const vendors = uniqueSorted(
-      allProducts.map((product) => product.vendor)
-    );
+const cacheKey = collectionName || "all";
 
-    const colors = uniqueSorted(
-      allProducts.map((product) => product.color)
-    );
+const cached = METADATA_CACHE.get(cacheKey);
 
-    const sizes = uniqueSorted(
-      allProducts.map((product) => product.size)
-    );
+if (
+  cached &&
+  Date.now() - cached.time < CACHE_TIME
+) {
+  metaRows = cached.data;
+} else {
+  const { data, error } = await baseQuery;
 
-    const prices = allProducts
-      .map((product) => Number.parseFloat(product.price))
-      .filter((price) => Number.isFinite(price));
+  if (error) throw error;
 
-    const min = prices.length
-      ? Math.min(...prices)
-      : 0;
+  metaRows = data || [];
 
-    const max = prices.length
-      ? Math.max(...prices)
-      : 0;
+  METADATA_CACHE.set(cacheKey, {
+    time: Date.now(),
+    data: metaRows
+  });
+}
 
-    /*
-      Build the filtered product query.
-    */
+const vendors = new Set();
+const colors = new Set();
+const sizes = new Set();
+const fabrics = new Set();
+const productTypes = new Set();
+const deliveryTimeline = new Set();
+
+let lowestPrice = Number.MAX_SAFE_INTEGER;
+let highestPrice = 0;
+if (price < lowestPrice)
+    lowestPrice = price;
+
+if (price > highestPrice)
+    highestPrice = price;const priceRange = {
+    min:
+        lowestPrice === Number.MAX_SAFE_INTEGER
+            ? 0
+            : lowestPrice,
+
+    max: highestPrice
+};
+
+for (const p of metaRows || []) {
+
+  if (p.vendor)
+    vendors.add(p.vendor);
+
+  if (p.color)
+    colors.add(p.color);
+
+  if (p.size)
+    sizes.add(p.size);
+
+  if (p.fabric)
+    fabrics.add(p.fabric);
+
+  if (p.product_type)
+    productTypes.add(p.product_type);
+
+  if (p.delivery_time)
+    deliveryTimeline.add(p.delivery_time);
+
+  const price = Number(p.price);
+
+  if (!Number.isFinite(price))
+    continue;
+
+  if (price < minPrice)
+    minPrice = price;
+
+  if (price > maxPrice)
+    maxPrice = price;
+}
+
+const priceRange = {
+  min:
+    minPrice === Number.MAX_SAFE_INTEGER
+      ? 0
+      : minPrice,
+
+  max: maxPrice,
+};
+    
+    
+    /* ======================================
+       PRODUCT QUERY
+    ====================================== */
+console.log({
+  collection: collectionName,
+  page: currentPage,
+  sort: sort_by,
+  vendor,
+  color,
+  size,
+  fabric,
+  delivery_timeline,
+  minPrice,
+  maxPrice
+});
     let query = supabase
       .from("products")
-      .select(PRODUCT_COLUMNS)
-      .ilike(
-        "product_type",
-        normalizedCollection
-      )
-      .order("title", {
-        ascending: true,
+      .select(PRODUCT_COLUMNS, {
+        count: "exact",
       });
 
-    /*
-      Price filters.
-    */
-    if (minPrice !== undefined) {
-      const minP = parseNumber(
-        minPrice,
-        "minPrice"
+    if (collectionName) {
+      query = query.ilike(
+        "product_type",
+        collectionName
       );
-
-      query = query.gte("price", minP);
     }
 
-    if (maxPrice !== undefined) {
-      const maxP = parseNumber(
-        maxPrice,
-        "maxPrice"
-      );
-
-      query = query.lte("price", maxP);
-    }
-
-    /*
-      Multiple filter values are supported:
-
-      ?vendor=Brand A&vendor=Brand B
-      ?color=Red&color=Blue
-      ?size=S&size=M
-    */
-    query = applyMultiValueFilter(
+    query = applyMultiFilter(
       query,
       "vendor",
       vendor
     );
 
-    query = applyMultiValueFilter(
+    query = applyMultiFilter(
       query,
       "color",
       color
     );
 
-    query = applyMultiValueFilter(
+    query = applyMultiFilter(
       query,
       "size",
       size
     );
 
-    const {
-      data: filteredProducts,
-      error: productsError,
-    } = await query;
+    query = applyMultiFilter(
+      query,
+      "fabric",
+      fabric
+    );
 
-    if (productsError) {
-      throw productsError;
+    query = applyMultiFilter(
+      query,
+      "product_type",
+      product_type
+    );
+
+    query = applyMultiFilter(
+      query,
+      "delivery_time",
+      delivery_timeline
+    );
+
+    if (minPrice !== undefined) {
+      query = query.gte(
+        "price",
+        Number(minPrice)
+      );
     }
 
-    return res.status(200).json({
-      filters: {
-        vendors,
-        colors,
-        sizes,
-        priceRange: {
-          min,
-          max,
-        },
-      },
-      products: filteredProducts || [],
+    if (maxPrice !== undefined) {
+      query = query.lte(
+        "price",
+        Number(maxPrice)
+      );
+    }    /* ======================================
+       SORTING
+    ====================================== */
+
+    switch (sort_by) {
+
+  case "price-ascending":
+    query = query.order("price");
+    break;
+
+  case "price-descending":
+    query = query.order("price", {
+      ascending: false
     });
+    break;
+
+  case "title-ascending":
+    query = query.order("title");
+    break;
+
+  case "title-descending":
+    query = query.order("title", {
+      ascending: false
+    });
+    break;
+
+  case "created-ascending":
+    query = query.order("id");
+    break;
+
+  case "created-descending":
+    query = query.order("id", {
+      ascending: false
+    });
+    break;
+
+  default:
+    query = query.order("title");
+}
+
+    /* ======================================
+       PAGINATION
+    ====================================== */
+
+    query = query.range(from, to);
+
+
+
+
+
+const {
+  data: products,
+  error: productError,
+  count,
+} = productResult;
+
+
+if (productError) {
+  throw productError;
+}
+
+    const totalProducts = count || 0;
+
+    const totalPages =
+      Math.max(
+        1,
+        Math.ceil(totalProducts / PAGE_SIZE)
+      );
+
+    /* ======================================
+       RESPONSE
+    ====================================== */
+console.log(
+  `Filter API: ${Date.now() - start} ms`
+);
+    return res.status(200).json({
+
+      filters: {
+
+  vendors: [...vendors].sort(),
+
+  colors: [...colors].sort(),
+
+  sizes: [...sizes].sort(),
+
+  fabrics: [...fabrics].sort(),
+
+  productTypes: [...productTypes].sort(),
+
+  delivery_timeline: [...deliveryTimeline].sort(),
+
+  priceRange,
+
+},
+      products: products || [],
+
+      pagination: {
+
+        currentPage,
+
+        totalPages,
+
+        totalProducts,
+
+        pageSize: PAGE_SIZE,
+
+      },
+
+    });
+
   } catch (error) {
-    console.error("Products API error:", error);
+
+    console.error(error);
 
     return res.status(500).json({
-      error: error.message || "Internal server error",
+
+      error: error.message,
+
     });
+
   }
+
 }
