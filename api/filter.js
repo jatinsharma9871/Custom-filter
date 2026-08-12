@@ -1,4 +1,4 @@
-do for this import { createClient } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -84,16 +84,21 @@ function applyMultiValueFilter(query, column, value) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Origin",
+    "*"
+  );
+
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET,OPTIONS"
+  );
+
   res.setHeader(
     "Access-Control-Allow-Headers",
     "Content-Type"
   );
 
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
   res.setHeader(
     "Cache-Control",
     "no-store, no-cache, must-revalidate, proxy-revalidate"
@@ -114,15 +119,13 @@ export default async function handler(req, res) {
 
   try {
     const {
-  collection,
-  minPrice,
-  maxPrice,
-  vendor,
-  color,
-  size,
-  fabric,
-  delivery_time
-} = req.query;
+      collection,
+      minPrice,
+      maxPrice,
+      vendor,
+      color,
+      size,
+    } = req.query;
 
     if (!collection) {
       return res.status(400).json({
@@ -138,18 +141,15 @@ export default async function handler(req, res) {
       the filter labels and price range.
     */
     const {
-  data: allProducts,
-  error: metadataError,
-} = await supabase
-  .from("products")
-  .select("*")
-  .eq("status", "ACTIVE")
-  .eq("published", true)
-  .filter(
-    "collection_handle",
-    "cs",
-    `["${normalizedCollection}"]`
-  )
+      data: allProducts,
+      error: metadataError,
+    } = await supabase
+      .from("products")
+      .select(PRODUCT_COLUMNS)
+      .ilike(
+        "product_type",
+        normalizedCollection
+      )
       .order("title", {
         ascending: true,
       });
@@ -187,12 +187,6 @@ export default async function handler(req, res) {
     const sizes = uniqueSorted(
       allProducts.map((product) => product.size)
     );
-    const fabrics = uniqueSorted(
-  allProducts.map((product) => product.fabric)
-);
-const deliveryTimes = uniqueSorted(
-  allProducts.map(product => product.delivery_time)
-);
 
     const prices = allProducts
       .map((product) => Number.parseFloat(product.price))
@@ -209,27 +203,13 @@ const deliveryTimes = uniqueSorted(
     /*
       Build the filtered product query.
     */
-   let query = supabase
-  .from("products")
-  .select("*")
-  .eq("status", "ACTIVE")
-  .eq("published", true)
-  .filter(
-    "collection_handle",
-    "cs",
-    `["${normalizedCollection}"]`
-  )
-  query = applyMultiValueFilter(
-  query,
-  "fabric",
-  fabric
-);
-
-query = applyMultiValueFilter(
-  query,
-  "delivery_time",
-  delivery_time
-);
+    let query = supabase
+      .from("products")
+      .select(PRODUCT_COLUMNS)
+      .ilike(
+        "product_type",
+        normalizedCollection
+      )
       .order("title", {
         ascending: true,
       });
@@ -285,68 +265,20 @@ query = applyMultiValueFilter(
       error: productsError,
     } = await query;
 
-    // Vendors that exist after current filters
-const availableVendors = new Set(
-  (filteredProducts || [])
-    .map(product => product.vendor)
-    .filter(Boolean)
-);
-
-const availableColors = new Set(
-  (filteredProducts || [])
-    .map(product => product.color)
-    .filter(Boolean)
-);
-
-const availableSizes = new Set(
-  (filteredProducts || [])
-    .map(product => product.size)
-    .filter(Boolean)
-);
-
-const availableFabrics = new Set(
-  (filteredProducts || [])
-    .map(product => product.fabric)
-    .filter(Boolean)
-);
-const availableDeliveryTimes = new Set(
-  (filteredProducts || [])
-    .map(product => product.delivery_time)
-    .filter(Boolean)
-);
     if (productsError) {
       throw productsError;
     }
 
     return res.status(200).json({
-   filters: {
-  vendors: vendors.map(name => ({
-    name,
-    available: availableVendors.has(name)
-  })),
-
-  colors: colors.map(name => ({
-    name,
-    available: availableColors.has(name)
-  })),
-
-  sizes: sizes.map(name => ({
-    name,
-    available: availableSizes.has(name)
-  })),
-  fabrics: fabrics.map(name => ({
-    name,
-    available: availableFabrics.has(name)
-  })),
-delivery_time: deliveryTimes.map(name => ({
-  name,
-  available: availableDeliveryTimes.has(name)
-})),
-  priceRange: {
-    min,
-    max,
-  },
-},
+      filters: {
+        vendors,
+        colors,
+        sizes,
+        priceRange: {
+          min,
+          max,
+        },
+      },
       products: filteredProducts || [],
     });
   } catch (error) {
