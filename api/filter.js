@@ -141,15 +141,18 @@ export default async function handler(req, res) {
       the filter labels and price range.
     */
     const {
-      data: allProducts,
-      error: metadataError,
-    } = await supabase
-      .from("products")
-      .select(PRODUCT_COLUMNS)
-      .ilike(
-        "product_type",
-        normalizedCollection
-      )
+  data: allProducts,
+  error: metadataError,
+} = await supabase
+  .from("products")
+  .select("*")
+  .eq("status", "ACTIVE")
+  .eq("published", true)
+  .filter(
+    "collection_handle",
+    "cs",
+    `["${normalizedCollection}"]`
+  )
       .order("title", {
         ascending: true,
       });
@@ -187,6 +190,12 @@ export default async function handler(req, res) {
     const sizes = uniqueSorted(
       allProducts.map((product) => product.size)
     );
+    const fabrics = uniqueSorted(
+  allProducts.map((product) => product.fabric)
+);
+const deliveryTimes = uniqueSorted(
+  allProducts.map(product => product.delivery_time)
+);
 
     const prices = allProducts
       .map((product) => Number.parseFloat(product.price))
@@ -203,13 +212,16 @@ export default async function handler(req, res) {
     /*
       Build the filtered product query.
     */
-    let query = supabase
-      .from("products")
-      .select(PRODUCT_COLUMNS)
-      .ilike(
-        "product_type",
-        normalizedCollection
-      )
+   let query = supabase
+  .from("products")
+  .select("*")
+  .eq("status", "ACTIVE")
+  .eq("published", true)
+  .filter(
+    "collection_handle",
+    "cs",
+    `["${normalizedCollection}"]`
+  )
       .order("title", {
         ascending: true,
       });
@@ -265,20 +277,65 @@ export default async function handler(req, res) {
       error: productsError,
     } = await query;
 
+    // Vendors that exist after current filters
+const availableVendors = new Set(
+  (filteredProducts || [])
+    .map(product => product.vendor)
+    .filter(Boolean)
+);
+
+const availableColors = new Set(
+  (filteredProducts || [])
+    .map(product => product.color)
+    .filter(Boolean)
+);
+
+const availableSizes = new Set(
+  (filteredProducts || [])
+    .map(product => product.size)
+    .filter(Boolean)
+);
+
+const availableFabrics = new Set(
+  (filteredProducts || [])
+    .map(product => product.fabric)
+    .filter(Boolean)
+);
+const availableDeliveryTimes = new Set(
+  (filteredProducts || [])
+    .map(product => product.delivery_time)
+    .filter(Boolean)
+);
     if (productsError) {
       throw productsError;
     }
 
     return res.status(200).json({
-      filters: {
-        vendors,
-        colors,
-        sizes,
-        priceRange: {
-          min,
-          max,
-        },
-      },
+   filters: {
+  vendors: vendors.map(name => ({
+    name,
+    available: availableVendors.has(name)
+  })),
+
+  colors: colors.map(name => ({
+    name,
+    available: availableColors.has(name)
+  })),
+
+  sizes: sizes.map(name => ({
+    name,
+    available: availableSizes.has(name)
+  })),
+  fabrics: fabrics.map(name => ({
+    name,
+    available: availableFabrics.has(name)
+  })),
+
+  priceRange: {
+    min,
+    max,
+  },
+},
       products: filteredProducts || [],
     });
   } catch (error) {
