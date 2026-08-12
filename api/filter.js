@@ -153,21 +153,20 @@ export default async function handler(req, res) {
       const selectedColors = toList(color).map(normalize);
 
       products = products.filter((product) => {
-        const productColors = safeParse(product.color).map(normalize);
+       const productColors = safeParse(product.color)
+  .flatMap(c => String(c).split(","))
+  .map(c => c.trim().toLowerCase())
+  .filter(Boolean);
 
-        const variantColors = safeParse(product.variants).map((variant) =>
-          normalize(variant?.color)
-        );
-
-        return selectedColors.some(
-          (selectedColor) =>
-            productColors.some((productColor) =>
-              productColor.includes(selectedColor)
-            ) ||
-            variantColors.some((variantColor) =>
-              variantColor.includes(selectedColor)
-            )
-        );
+      const variantColors = safeParse(product.variants)
+  .flatMap(v => String(v?.color || "").split(","))
+  .map(c => c.trim().toLowerCase())
+  .filter(Boolean);
+  return selectedColors.some(color =>
+  productColors.includes(color) ||
+  variantColors.includes(color)
+);
+       
       });
     }
 
@@ -277,9 +276,11 @@ export default async function handler(req, res) {
         typeSet.add(String(product.product_type).trim());
       }
 
-      safeParse(product.color).forEach((item) => {
-        if (item) colorSet.add(String(item).trim());
-      });
+      safeParse(product.color)
+  .flatMap(item => String(item).split(","))
+  .map(item => item.trim())
+  .filter(Boolean)
+  .forEach(color => colorSet.add(color));
 
       safeParse(product.fabric).forEach((item) => {
         if (item) fabricSet.add(String(item).trim());
