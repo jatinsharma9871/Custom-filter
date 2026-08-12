@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+do for this import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -15,7 +15,7 @@ const PRODUCT_COLUMNS = `
   image,
   color,
   size,
-  fabric, 
+  fabric,
   delivery_time
 `;
 
@@ -288,4 +288,4 @@ export default async function handler(req, res) {
       error: error.message || "Internal server error",
     });
   }
-} 
+}
