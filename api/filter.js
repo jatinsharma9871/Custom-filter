@@ -119,13 +119,15 @@ export default async function handler(req, res) {
 
   try {
     const {
-      collection,
-      minPrice,
-      maxPrice,
-      vendor,
-      color,
-      size,
-    } = req.query;
+  collection,
+  minPrice,
+  maxPrice,
+  vendor,
+  color,
+  size,
+  fabric,
+  delivery_time
+} = req.query;
 
     if (!collection) {
       return res.status(400).json({
@@ -222,6 +224,17 @@ const deliveryTimes = uniqueSorted(
     "cs",
     `["${normalizedCollection}"]`
   )
+  query = applyMultiValueFilter(
+  query,
+  "fabric",
+  fabric
+);
+
+query = applyMultiValueFilter(
+  query,
+  "delivery_time",
+  delivery_time
+);
       .order("title", {
         ascending: true,
       });
@@ -330,7 +343,10 @@ const availableDeliveryTimes = new Set(
     name,
     available: availableFabrics.has(name)
   })),
-
+delivery_time: deliveryTimes.map(name => ({
+  name,
+  available: availableDeliveryTimes.has(name)
+})),
   priceRange: {
     min,
     max,
