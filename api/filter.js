@@ -15,7 +15,7 @@ const PRODUCT_COLUMNS = `
   image,
   color,
   size,
-  fabric,
+  fabric, 
   delivery_time
 `;
 
