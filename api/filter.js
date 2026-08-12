@@ -176,33 +176,17 @@ export default async function handler(req, res) {
     /*
       Build filter labels.
     */
-    const vendorMap = {};
-const colorMap = {};
-const sizeMap = {};
+    const vendors = uniqueSorted(
+      allProducts.map((product) => product.vendor)
+    );
 
-// All values in the collection
-allProducts.forEach(product => {
-  if (product.vendor)
-    vendorMap[product.vendor] = false;
+    const colors = uniqueSorted(
+      allProducts.map((product) => product.color)
+    );
 
-  if (product.color)
-    colorMap[product.color] = false;
-
-  if (product.size)
-    sizeMap[product.size] = false;
-});
-
-// Mark available values from filtered products
-(filteredProducts || []).forEach(product => {
-  if (product.vendor)
-    vendorMap[product.vendor] = true;
-
-  if (product.color)
-    colorMap[product.color] = true;
-
-  if (product.size)
-    sizeMap[product.size] = true;
-});
+    const sizes = uniqueSorted(
+      allProducts.map((product) => product.size)
+    );
 
     const prices = allProducts
       .map((product) => Number.parseFloat(product.price))
@@ -287,32 +271,14 @@ allProducts.forEach(product => {
 
     return res.status(200).json({
       filters: {
-  vendors: Object.keys(vendorMap)
-    .sort()
-    .map(name => ({
-      name,
-      available: vendorMap[name]
-    })),
-
-  colors: Object.keys(colorMap)
-    .sort()
-    .map(name => ({
-      name,
-      available: colorMap[name]
-    })),
-
-  sizes: Object.keys(sizeMap)
-    .sort()
-    .map(name => ({
-      name,
-      available: sizeMap[name]
-    })),
-
-  priceRange: {
-    min,
-    max
-  }
-},
+        vendors,
+        colors,
+        sizes,
+        priceRange: {
+          min,
+          max,
+        },
+      },
       products: filteredProducts || [],
     });
   } catch (error) {
