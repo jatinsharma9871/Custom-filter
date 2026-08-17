@@ -83,13 +83,35 @@ export default async function handler(req, res) {
       );
     }
 
-    const { data: allProducts, error } = await query;
-    console.log("Collection:", normalizedCollection);
-console.log("Products fetched:", allProducts?.length);
+   let allProducts = [];
+let from = 0;
+const batchSize = 1000;
 
-    if (error) {
-      return res.status(500).json({ error: error.message });
-    }
+while (true) {
+  const { data, error } = await query.range(from, from + batchSize - 1);
+
+  if (error) {
+    return res.status(500).json({ error: error.message });
+  }
+
+  if (!data || data.length === 0) {
+    break;
+  }
+
+  allProducts.push(...data);
+
+  console.log(
+    `Fetched ${data.length} products (Total: ${allProducts.length})`
+  );
+
+  if (data.length < batchSize) {
+    break;
+  }
+
+  from += batchSize;
+}
+
+console.log("Final products fetched:", allProducts.length);
 
     if (!allProducts?.length) {
       return res.status(200).json({
