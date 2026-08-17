@@ -84,6 +84,8 @@ export default async function handler(req, res) {
     }
 
     const { data: allProducts, error } = await query;
+    console.log("Collection:", normalizedCollection);
+console.log("Products fetched:", allProducts?.length);
 
     if (error) {
       return res.status(500).json({ error: error.message });
@@ -199,7 +201,7 @@ export default async function handler(req, res) {
     }
 
     // Build filter options after selected filters, before inventory filtering.
-    const filterSource = [...products];
+    const filterSource = [...allProducts];
 
     /* ================= INVENTORY FILTER ================= */
 
