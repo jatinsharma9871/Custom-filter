@@ -87,7 +87,8 @@ let query = supabase
   .from("products")
   .select("*")
   .eq("status", "ACTIVE")
-  .eq("published", true);
+  .eq("published", true)
+  .gt("inventory_quantity", 0);
 
 if (normalizedCollection && normalizedCollection !== "all") {
   query = query.filter(
@@ -144,22 +145,22 @@ console.log("Final products fetched:", allProducts.length);
     let products = [...allProducts];
 
     // Designer
-    if (vendor) {
-      const selectedVendors = toList(vendor).map(normalize);
+    // if (vendor) {
+    //   const selectedVendors = toList(vendor).map(normalize);
 
-      products = products.filter((product) =>
-        selectedVendors.includes(normalize(product.vendor))
-      );
-    }
+    //   products = products.filter((product) =>
+    //     selectedVendors.includes(normalize(product.vendor))
+    //   );
+    // }
 
     // Product type
-    if (product_type) {
-      const selectedTypes = toList(product_type).map(normalize);
+    // if (product_type) {
+    //   const selectedTypes = toList(product_type).map(normalize);
 
-      products = products.filter((product) =>
-        selectedTypes.includes(normalize(product.product_type))
-      );
-    }
+    //   products = products.filter((product) =>
+    //     selectedTypes.includes(normalize(product.product_type))
+    //   );
+    // }
 
     // Fabric
     if (fabric) {
@@ -175,16 +176,16 @@ console.log("Final products fetched:", allProducts.length);
     }
 
     // Price
-    if (minPrice || maxPrice) {
-      products = products.filter((product) => {
-        const price = Number(product.price || 0);
+    // if (minPrice || maxPrice) {
+    //   products = products.filter((product) => {
+    //     const price = Number(product.price || 0);
 
-        if (minPrice && price < Number(minPrice)) return false;
-        if (maxPrice && price > Number(maxPrice)) return false;
+    //     if (minPrice && price < Number(minPrice)) return false;
+    //     if (maxPrice && price > Number(maxPrice)) return false;
 
-        return true;
-      });
-    }
+    //     return true;
+    //   });
+    // }
 
     // Color
     if (color) {
@@ -241,11 +242,11 @@ console.log("Final products fetched:", allProducts.length);
 
     /* ================= INVENTORY FILTER ================= */
 
-    products = products.filter((product) => {
-      if (Number(product.inventory_quantity) > 0) return true;
+    // products = products.filter((product) => {
+    //   if (Number(product.inventory_quantity) > 0) return true;
 
-      return safeParse(product.variants).some(variantIsAvailable);
-    });
+    //   return safeParse(product.variants).some(variantIsAvailable);
+    // });
 
     /* ================= FORMAT PRODUCTS ================= */
 
