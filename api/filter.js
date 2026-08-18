@@ -74,24 +74,7 @@ export default async function handler(req, res) {
 
     let query = supabase
       .from("products")
-      .select(`
-id,
-title,
-handle,
-vendor,
-product_type,
-price,
-compare_at_price,
-image,
-images,
-inventory_quantity,
-variants,
-color,
-fabric,
-delivery_timeline,
-created_at,
-position
-`)
+      .select("*")
       .eq("status", "ACTIVE")
       .eq("published", true);
 
