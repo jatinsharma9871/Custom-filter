@@ -11,7 +11,7 @@ const SHOP =
 
 const TOKEN =
   process.env.SHOPIFY_ACCESS_TOKEN ||
-  "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";
+  "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";
 
 const API_VERSION =
   process.env.SHOPIFY_API_VERSION ||
@@ -308,15 +308,16 @@ const productConnection = data.data.products;
     console.log(
       `✓ Total Synced: ${totalSynced}`
     );
-console.log(
-  `${Math.round((totalSynced / totalProducts) * 100)}% Complete`
-);
+// console.log(
+//   `${Math.round((totalSynced / totalProducts) * 100)}% Complete`
+// );
     console.log(
       "--------------------------------"
     );
 
     batch++;
       } // End while
+      await buildFilterCache();
  console.log("\n================================");
     console.log("✅ Shopify Sync Completed");
     console.log(`📦 Total Products Synced: ${totalSynced}`);
@@ -332,6 +333,138 @@ console.log(
 
     process.exitCode = 1;
   }
+}
+/* =========================================================
+   BUILD FILTER CACHE
+========================================================= */
+
+async function buildFilterCache() {
+  console.log("\nBuilding Filter Cache...");
+
+  const { data: products, error } = await supabase
+    .from("products")
+    .select(`
+      collection_handle,
+      vendor,
+      product_type,
+      color,
+      size,
+      fabric,
+      delivery_time,
+      price,
+      inventory_quantity,
+      variants
+    `);
+
+  if (error) throw error;
+
+  const collections = {};
+
+  for (const product of products) {
+    let handles = product.collection_handle;
+
+    if (!handles) continue;
+
+    if (typeof handles === "string") {
+      try {
+        handles = JSON.parse(handles);
+      } catch {
+        handles = [handles];
+      }
+    }
+
+    if (!Array.isArray(handles)) continue;
+
+    handles.forEach(handle => {
+
+      if (!collections[handle]) {
+        collections[handle] = {
+          vendors: new Set(),
+          productTypes: new Set(),
+          colors: new Set(),
+          fabrics: new Set(),
+          delivery: new Set(),
+          sizes: new Set(),
+          prices: []
+        };
+      }
+
+      const c = collections[handle];
+
+      if (product.vendor)
+        c.vendors.add(product.vendor.trim());
+
+      if (product.product_type)
+        c.productTypes.add(product.product_type.trim());
+
+      if (product.price)
+        c.prices.push(Number(product.price));
+
+      const addValues = (value, set) => {
+
+        if (!value) return;
+
+        let arr = [];
+
+        try {
+          arr = Array.isArray(value)
+            ? value
+            : JSON.parse(value);
+        } catch {
+          arr = String(value).split(",");
+        }
+
+        arr
+          .flatMap(v => String(v).split(","))
+          .map(v => v.trim())
+          .filter(Boolean)
+          .forEach(v => set.add(v));
+      };
+
+      addValues(product.color, c.colors);
+      addValues(product.fabric, c.fabrics);
+      addValues(product.delivery_time, c.delivery);
+      addValues(product.size, c.sizes);
+
+    });
+  }
+
+  console.log(
+    `Collections Found: ${Object.keys(collections).length}`
+  );
+
+const rows = Object.entries(collections).map(([handle, data]) => ({
+  collection_handle: handle,
+  filters: {
+    vendors: [...data.vendors].sort().map(name => ({ name })),
+    productTypes: [...data.productTypes].sort().map(name => ({ name })),
+    colors: [...data.colors].sort().map(name => ({ name })),
+    fabrics: [...data.fabrics].sort(),
+    delivery_timeline: [...data.delivery].sort(),
+    sizes: [...data.sizes].sort().map(name => ({
+      name,
+      available: true
+    })),
+    priceRange: {
+      min: data.prices.length ? Math.min(...data.prices) : 0,
+      max: data.prices.length ? Math.max(...data.prices) : 0
+    }
+  },
+  updated_at: new Date().toISOString()
+}));
+
+const { error: cacheError } = await supabase
+  .from("filter_cache")
+  .upsert(rows, {
+    onConflict: "collection_handle"
+  });
+
+if (cacheError) throw cacheError;
+
+console.log(`✅ Filter cache updated (${rows.length} collections)`);
+console.log(rows.slice(0,3));
+
+return rows.length;
 }
 
 /* =========================================================
