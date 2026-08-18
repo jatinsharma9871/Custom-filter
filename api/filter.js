@@ -73,7 +73,7 @@ export default async function handler(req, res) {
 
 let cachedFilters = null;
 console.log("Collection:", normalizedCollection);
-if (normalizedCollection && normalizedCollection !== "alle") {
+if (normalizedCollection && normalizedCollection !== "all") {
   const { data } = await supabase
     .from("filter_cache")
     .select("filters")
