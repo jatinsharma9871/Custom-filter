@@ -103,6 +103,10 @@ let from = 0;
 const batchSize = 1000;
 
 while (true) {
+  if (color) {
+  query = query.overlaps("color", toList(color));
+  
+}
   const { data, error } = await query.range(from, from + batchSize - 1);
 
   if (error) {
@@ -143,7 +147,27 @@ console.log("Final products fetched:", allProducts.length);
     /* ================= APPLY FILTERS ================= */
 
     let products = [...allProducts];
+if (vendor) {
+  query = query.in("vendor", toList(vendor));
+}
 
+if (product_type) {
+  query = query.in("product_type", toList(product_type));
+}
+
+if (color) {
+  query = query.overlaps("color", toList(color));
+}
+
+if (minPrice) {
+  query = query.gte("price", Number(minPrice));
+}
+
+if (maxPrice) {
+  query = query.lte("price", Number(maxPrice));
+}
+
+// const { data, error } = await query;
     // Designer
     // if (vendor) {
     //   const selectedVendors = toList(vendor).map(normalize);
@@ -188,26 +212,7 @@ console.log("Final products fetched:", allProducts.length);
     // }
 
     // Color
-    if (color) {
-      const selectedColors = toList(color).map(normalize);
-
-      products = products.filter((product) => {
-       const productColors = safeParse(product.color)
-  .flatMap(c => String(c).split(","))
-  .map(c => c.trim().toLowerCase())
-  .filter(Boolean);
-
-      const variantColors = safeParse(product.variants)
-  .flatMap(v => String(v?.color || "").split(","))
-  .map(c => c.trim().toLowerCase())
-  .filter(Boolean);
-  return selectedColors.some(color =>
-  productColors.includes(color) ||
-  variantColors.includes(color)
-);
-       
-      });
-    }
+    
 
     // Size — added
     if (size) {
