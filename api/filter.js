@@ -1,8 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
 
-
-
-
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -78,54 +75,59 @@ export default async function handler(req, res) {
       .eq("status", "ACTIVE")
       .eq("published", true);
 
-   // ================= FILTER CACHE =================
-let cached = null;
+    if (normalizedCollection && normalizedCollection !== "all") {
+      query = query.filter(
+        "collection_handle",
+        "cs",
+        `["${normalizedCollection}"]`
+      );
+    }
 
-if (normalizedCollection && normalizedCollection !== "all") {
-  const { data } = await supabase
-    .from("filter_cache")
-    .select("filters")
-    .eq("collection_handle", normalizedCollection)
-    .single();
+   let allProducts = [];
+let from = 0;
+const batchSize = 1000;
 
-  cached = data;
-}
-if (normalizedCollection && normalizedCollection !== "all") {
-  query = query.filter(
-    "collection_handle",
-    "cs",
-    `["${normalizedCollection}"]`
+while (true) {
+  const { data, error } = await query.range(from, from + batchSize - 1);
+
+  if (error) {
+    return res.status(500).json({ error: error.message });
+  }
+
+  if (!data || data.length === 0) {
+    break;
+  }
+
+  allProducts.push(...data);
+
+  console.log(
+    `Fetched ${data.length} products (Total: ${allProducts.length})`
   );
+
+  if (data.length < batchSize) {
+    break;
+  }
+
+  from += batchSize;
 }
 
-if (vendor) {
-  query = query.in("vendor", toList(vendor));
-}
+console.log("Final products fetched:", allProducts.length);
 
-if (product_type) {
-  query = query.in("product_type", toList(product_type));
-}
-
-if (minPrice) {
-  query = query.gte("price", Number(minPrice));
-}
-
-if (maxPrice) {
-  query = query.lte("price", Number(maxPrice));
-}
-const { data, error } = await query;
-
-if (error) {
-  return res.status(500).json({
-    error: error.message
-  });
-}
-
-let products = data || [];
+    if (!allProducts?.length) {
+      return res.status(200).json({
+        filters: {},
+        products: [],
+        pagination: {
+          total: 0,
+          totalPages: 0,
+          currentPage: 1
+        }
+      });
+    }
 
     /* ================= APPLY FILTERS ================= */
 
-   
+    let products = [...allProducts];
 
     // Designer
     if (vendor) {
@@ -221,7 +223,7 @@ let products = data || [];
     }
 
     // Build filter options after selected filters, before inventory filtering.
-    // const filterSource = cached?.filters || null;
+    const filterSource = [...allProducts];
 
     /* ================= INVENTORY FILTER ================= */
 
@@ -235,7 +237,6 @@ let products = data || [];
 
     let formattedProducts = products.map((product) => ({
       ...product,
-      
       price: Number(product.price || 0),
       compare_at_price: Number(
         product.compare_at_price ||
@@ -243,8 +244,6 @@ let products = data || [];
           product.mrp ||
           0
       )
-      
-      
     }));
 
     /* ================= SORT ================= */
@@ -285,30 +284,103 @@ let products = data || [];
 
     /* ================= BUILD FILTER OPTIONS ================= */
 
+    const vendorSet = new Set();
+    const typeSet = new Set();
+    const colorSet = new Set();
+    const fabricSet = new Set();
+    const deliverySet = new Set();
+    const sizeAvailability = {};
 
-    
+    filterSource.forEach((product) => {
+      if (product.vendor) {
+        vendorSet.add(String(product.vendor).trim());
+      }
+
+      if (product.product_type) {
+        typeSet.add(String(product.product_type).trim());
+      }
+
+      safeParse(product.color)
+  .flatMap(item => String(item).split(","))
+  .map(item => item.trim())
+  .filter(Boolean)
+  .forEach(color => colorSet.add(color));
+
+      safeParse(product.fabric).forEach((item) => {
+        if (item) fabricSet.add(String(item).trim());
+      });
+
+      safeParse(product.delivery_timeline).forEach((item) => {
+        if (item) deliverySet.add(String(item).trim());
+      });
+
+      safeParse(product.variants).forEach((variant) => {
+        const variantSize = String(variant?.size || "").trim();
+
+        if (!variantSize) return;
+
+        if (!(variantSize in sizeAvailability)) {
+          sizeAvailability[variantSize] = false;
+        }
+
+        if (variantIsAvailable(variant)) {
+          sizeAvailability[variantSize] = true;
+        }
+      });
+    });
+
+    const vendors = [...vendorSet];
+    const productTypes = [...typeSet];
+    const colors = [...colorSet];
+    const fabrics = [...fabricSet];
+    const delivery = [...deliverySet];
+    const sizes = Object.keys(sizeAvailability);
+
+    const productPrices = formattedProducts.map((product) => product.price);
+
     return res.status(200).json({
-  filters: cached?.filters || {
-    vendors: [],
-    productTypes: [],
-    colors: [],
-    fabrics: [],
-    delivery_timeline: [],
-    sizes: [],
-    priceRange: {
-      min: 0,
-      max: 0
-    }
-  },
+      filters: {
+        vendors:
+          vendors.length > 1
+            ? sortAlpha(vendors).map((name) => ({ name }))
+            : [],
 
-  products: paginatedProducts,
+        productTypes:
+          productTypes.length > 1
+            ? sortAlpha(productTypes).map((name) => ({ name }))
+            : [],
 
-  pagination: {
-    total,
-    totalPages,
-    currentPage
-  }
-});
+        colors:
+          colors.length > 1
+            ? sortAlpha(colors).map((name) => ({ name }))
+            : [],
+
+        fabrics: fabrics.length > 1 ? sortAlpha(fabrics) : [],
+
+        delivery_timeline: delivery.length > 1 ? sortAlpha(delivery) : [],
+
+        sizes:
+          sizes.length > 1
+            ? sortAlpha(sizes).map((name) => ({
+                name,
+                available: sizeAvailability[name]
+              }))
+            : [],
+
+        priceRange: {
+          min: productPrices.length ? Math.min(...productPrices) : 0,
+          max: productPrices.length ? Math.max(...productPrices) : 0
+        }
+      },
+
+      products: paginatedProducts,
+
+      pagination: {
+        total,
+        totalPages,
+        currentPage
+      }
+    });
   } catch (error) {
     console.error("API ERROR:", error);
 
