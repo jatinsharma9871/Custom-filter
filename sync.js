@@ -158,7 +158,7 @@ collections(first: 250) {
     }
   }
 }
-        variants(first: 1) {
+        variants(first: 10) {
           edges {
             node {
               price
@@ -243,7 +243,7 @@ const productConnection = data.data.products;
         product_type: node.productType,
 
         collection: node.productType,
-        
+
         collection_handle: collectionHandles,
 
         price: getPrice(node.variants),
