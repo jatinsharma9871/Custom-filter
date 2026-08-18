@@ -98,14 +98,28 @@ if (normalizedCollection && normalizedCollection !== "all") {
   );
 }
 
+if (vendor) {
+  query = query.in("vendor", toList(vendor));
+}
+
+if (product_type) {
+  query = query.in("product_type", toList(product_type));
+}
+
+if (minPrice) {
+  query = query.gte("price", Number(minPrice));
+}
+
+if (maxPrice) {
+  query = query.lte("price", Number(maxPrice));
+}
+
    let allProducts = [];
 let from = 0;
 const batchSize = 1000;
 
 while (true) {
-  if (color) {
-  query = query.overlaps("color", toList(color));
-}
+  
   const { data, error } = await query.range(from, from + batchSize - 1);
 
   if (error) {
@@ -146,26 +160,6 @@ console.log("Final products fetched:", allProducts.length);
     /* ================= APPLY FILTERS ================= */
 
     let products = [...allProducts];
-if (vendor) {
-  query = query.in("vendor", toList(vendor));
-}
-
-if (product_type) {
-  query = query.in("product_type", toList(product_type));
-}
-
-if (color) {
-  query = query.overlaps("color", toList(color));
-}
-
-if (minPrice) {
-  query = query.gte("price", Number(minPrice));
-}
-
-if (maxPrice) {
-  query = query.lte("price", Number(maxPrice));
-}
-
 // const { data, error } = await query;
     // Designer
     // if (vendor) {
