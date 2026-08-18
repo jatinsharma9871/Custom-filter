@@ -151,7 +151,13 @@ query GetProducts($cursor: String) {
             }
           }
         }
-
+collections(first: 250) {
+  edges {
+    node {
+      handle
+    }
+  }
+}
         variants(first: 1) {
           edges {
             node {
@@ -222,6 +228,8 @@ const productConnection = data.data.products;
       const products = edges.map(({ node }) => {
 
       const tags = node.tags || [];
+      const collectionHandles =
+  node.collections?.edges?.map(c => c.node.handle) || [];
 
       return {
         id: node.id,
@@ -235,6 +243,8 @@ const productConnection = data.data.products;
         product_type: node.productType,
 
         collection: node.productType,
+        
+        collection_handle: collectionHandles,
 
         price: getPrice(node.variants),
 
@@ -254,6 +264,7 @@ const productConnection = data.data.products;
         fabric: extractTag(tags, "Fabric"),
 
         delivery_time: extractTag(tags, "Delivery"),
+        
       };
 
     });

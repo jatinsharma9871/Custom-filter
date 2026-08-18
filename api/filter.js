@@ -235,6 +235,7 @@ let products = data || [];
 
     let formattedProducts = products.map((product) => ({
       ...product,
+      
       price: Number(product.price || 0),
       compare_at_price: Number(
         product.compare_at_price ||
@@ -242,6 +243,8 @@ let products = data || [];
           product.mrp ||
           0
       )
+      
+      
     }));
 
     /* ================= SORT ================= */
