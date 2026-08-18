@@ -105,7 +105,6 @@ const batchSize = 1000;
 while (true) {
   if (color) {
   query = query.overlaps("color", toList(color));
-  
 }
   const { data, error } = await query.range(from, from + batchSize - 1);
 
