@@ -69,19 +69,33 @@ export default async function handler(req, res) {
 
     /* ================= FETCH PRODUCTS ================= */
 
-    let query = supabase
-      .from("products")
-      .select("*")
-      .eq("status", "ACTIVE")
-      .eq("published", true);
+  /* ================= FETCH PRODUCTS ================= */
 
-    if (normalizedCollection && normalizedCollection !== "all") {
-      query = query.filter(
-        "collection_handle",
-        "cs",
-        `["${normalizedCollection}"]`
-      );
-    }
+let cachedFilters = null;
+
+if (normalizedCollection && normalizedCollection !== "all") {
+  const { data } = await supabase
+    .from("filter_cache")
+    .select("filters")
+    .eq("collection_handle", normalizedCollection)
+    .maybeSingle();
+
+  cachedFilters = data?.filters || null;
+}
+
+let query = supabase
+  .from("products")
+  .select("*")
+  .eq("status", "ACTIVE")
+  .eq("published", true);
+
+if (normalizedCollection && normalizedCollection !== "all") {
+  query = query.filter(
+    "collection_handle",
+    "cs",
+    `["${normalizedCollection}"]`
+  );
+}
 
    let allProducts = [];
 let from = 0;
@@ -339,40 +353,40 @@ console.log("Final products fetched:", allProducts.length);
     const productPrices = formattedProducts.map((product) => product.price);
 
     return res.status(200).json({
-      filters: {
-        vendors:
-          vendors.length > 1
-            ? sortAlpha(vendors).map((name) => ({ name }))
-            : [],
+      filters: cachedFilters || {
+  vendors:
+    vendors.length > 1
+      ? sortAlpha(vendors).map(name => ({ name }))
+      : [],
 
-        productTypes:
-          productTypes.length > 1
-            ? sortAlpha(productTypes).map((name) => ({ name }))
-            : [],
+  productTypes:
+    productTypes.length > 1
+      ? sortAlpha(productTypes).map(name => ({ name }))
+      : [],
 
-        colors:
-          colors.length > 1
-            ? sortAlpha(colors).map((name) => ({ name }))
-            : [],
+  colors:
+    colors.length > 1
+      ? sortAlpha(colors).map(name => ({ name }))
+      : [],
 
-        fabrics: fabrics.length > 1 ? sortAlpha(fabrics) : [],
+  fabrics: fabrics.length > 1 ? sortAlpha(fabrics) : [],
 
-        delivery_timeline: delivery.length > 1 ? sortAlpha(delivery) : [],
+  delivery_timeline:
+    delivery.length > 1 ? sortAlpha(delivery) : [],
 
-        sizes:
-          sizes.length > 1
-            ? sortAlpha(sizes).map((name) => ({
-                name,
-                available: sizeAvailability[name]
-              }))
-            : [],
+  sizes:
+    sizes.length > 1
+      ? sortAlpha(sizes).map(name => ({
+          name,
+          available: sizeAvailability[name]
+        }))
+      : [],
 
-        priceRange: {
-          min: productPrices.length ? Math.min(...productPrices) : 0,
-          max: productPrices.length ? Math.max(...productPrices) : 0
-        }
-      },
-
+  priceRange: {
+    min: productPrices.length ? Math.min(...productPrices) : 0,
+    max: productPrices.length ? Math.max(...productPrices) : 0
+  }
+},
       products: paginatedProducts,
 
       pagination: {
