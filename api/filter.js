@@ -72,8 +72,8 @@ export default async function handler(req, res) {
   /* ================= FETCH PRODUCTS ================= */
 
 let cachedFilters = null;
-
-if (normalizedCollection && normalizedCollection !== "all") {
+console.log("Collection:", normalizedCollection);
+if (normalizedCollection && normalizedCollection !== "alle") {
   const { data } = await supabase
     .from("filter_cache")
     .select("filters")
@@ -351,7 +351,7 @@ console.log("Final products fetched:", allProducts.length);
     const sizes = Object.keys(sizeAvailability);
 
     const productPrices = formattedProducts.map((product) => product.price);
-
+console.log(JSON.stringify(cachedFilters, null, 2));
     return res.status(200).json({
       filters: cachedFilters || {
   vendors:
