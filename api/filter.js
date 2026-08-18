@@ -74,69 +74,75 @@ export default async function handler(req, res) {
 
     let query = supabase
       .from("products")
-      .select("*")
+      .select(`
+id,
+title,
+handle,
+vendor,
+product_type,
+price,
+compare_at_price,
+image,
+images,
+inventory_quantity,
+variants,
+color,
+fabric,
+delivery_timeline,
+created_at,
+position
+`)
       .eq("status", "ACTIVE")
       .eq("published", true);
 
    // ================= FILTER CACHE =================
+let cached = null;
 
 if (normalizedCollection && normalizedCollection !== "all") {
-  const { data: cached } = await supabase
+  const { data } = await supabase
     .from("filter_cache")
     .select("filters")
     .eq("collection_handle", normalizedCollection)
     .single();
 
-  if (cached?.filters) {
-    console.log("Using cached filters");
-  }
+  cached = data;
 }
-
-   let allProducts = [];
-let from = 0;
-const batchSize = 1000;
-
-while (true) {
-  const { data, error } = await query.range(from, from + batchSize - 1);
-
-  if (error) {
-    return res.status(500).json({ error: error.message });
-  }
-
-  if (!data || data.length === 0) {
-    break;
-  }
-
-  allProducts.push(...data);
-
-  console.log(
-    `Fetched ${data.length} products (Total: ${allProducts.length})`
+if (normalizedCollection && normalizedCollection !== "all") {
+  query = query.filter(
+    "collection_handle",
+    "cs",
+    `["${normalizedCollection}"]`
   );
-
-  if (data.length < batchSize) {
-    break;
-  }
-
-  from += batchSize;
 }
 
-console.log("Final products fetched:", allProducts.length);
+if (vendor) {
+  query = query.in("vendor", toList(vendor));
+}
 
-    if (!allProducts?.length) {
-      return res.status(200).json({
-        filters: {},
-        products: [],
-        pagination: {
-          total: 0,
-          totalPages: 0,
-          currentPage: 1
-        }
-      });
-    }
+if (product_type) {
+  query = query.in("product_type", toList(product_type));
+}
+
+if (minPrice) {
+  query = query.gte("price", Number(minPrice));
+}
+
+if (maxPrice) {
+  query = query.lte("price", Number(maxPrice));
+}
+const { data, error } = await query;
+
+if (error) {
+  return res.status(500).json({
+    error: error.message
+  });
+}
+
+let products = data || [];
 
     /* ================= APPLY FILTERS ================= */
 
-    let products = [...allProducts];
+   
 
     // Designer
     if (vendor) {
@@ -232,7 +238,7 @@ console.log("Final products fetched:", allProducts.length);
     }
 
     // Build filter options after selected filters, before inventory filtering.
-    const filterSource = cached?.filters || null;
+    // const filterSource = cached?.filters || null;
 
     /* ================= INVENTORY FILTER ================= */
 
