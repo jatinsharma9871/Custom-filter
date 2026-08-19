@@ -156,14 +156,13 @@ switch (sort_by) {
   default:
     query = query.order("created_at", { ascending: false });
 }
-const currentPage = Math.max(1, Number(page) || 1);
-const limit = 12;
-const from = (currentPage - 1) * limit;
-const to = from + limit - 1;
+const { data: allProducts, error } = await query.select(PRODUCT_COLUMNS);
 
-const { data: allProducts, error, count } = await query
-  .select(PRODUCT_COLUMNS, { count: "exact" })
-  .range(from, to);
+if (error) {
+  return res.status(500).json({
+    error: error.message
+  });
+}
 
 if (error) {
   return res.status(500).json({
@@ -308,15 +307,15 @@ console.log("Final products fetched:", allProducts.length);
 
     /* ================= PAGINATION ================= */
 
-    // const currentPage = Math.max(1, Number(page) || 1);
-    // const limit = 12;
-    // const total = formattedProducts.length;
-    // const totalPages = Math.max(1, Math.ceil(total / limit));
+    const currentPage = Math.max(1, Number(page) || 1);
+    const limit = 12;
+    const total = formattedProducts.length;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
 
-    // const paginatedProducts = formattedProducts.slice(
-    //   (currentPage - 1) * limit,
-    //   currentPage * limit
-    // );
+    const paginatedProducts = formattedProducts.slice(
+      (currentPage - 1) * limit,
+      currentPage * limit
+    );
 const total = count || 0;
 const totalPages = Math.max(1, Math.ceil(total / limit));
 const paginatedProducts = formattedProducts;
