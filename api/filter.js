@@ -133,35 +133,49 @@ if (minPrice) {
 if (maxPrice) {
   query = query.lte("price", Number(maxPrice));
 }
+const currentPage = Math.max(1, Number(page) || 1);
+const limit = 12;
+const from = (currentPage - 1) * limit;
+const to = from + limit - 1;
 
-   let allProducts = [];
-let from = 0;
-const batchSize = 1000;
+const { data: allProducts, error, count } = await query
+  .select(PRODUCT_COLUMNS, { count: "exact" })
+  .range(from, to);
 
-while (true) {
-  
-  const { data, error } = await query.range(from, from + batchSize - 1);
-
-  if (error) {
-    return res.status(500).json({ error: error.message });
-  }
-
-  if (!data || data.length === 0) {
-    break;
-  }
-
-  allProducts.push(...data);
-
-  console.log(
-    `Fetched ${data.length} products (Total: ${allProducts.length})`
-  );
-
-  if (data.length < batchSize) {
-    break;
-  }
-
-  from += batchSize;
+if (error) {
+  return res.status(500).json({
+    error: error.message
+  });
 }
+
+//    let allProducts = [];
+// let from = 0;
+// const batchSize = 1000;
+
+// while (true) {
+  
+//   const { data, error } = await query.range(from, from + batchSize - 1);
+
+//   if (error) {
+//     return res.status(500).json({ error: error.message });
+//   }
+
+//   if (!data || data.length === 0) {
+//     break;
+//   }
+
+//   allProducts.push(...data);
+
+//   console.log(
+//     `Fetched ${data.length} products (Total: ${allProducts.length})`
+//   );
+
+//   if (data.length < batchSize) {
+//     break;
+//   }
+
+//   from += batchSize;
+// }
 
 console.log("Final products fetched:", allProducts.length);
 
@@ -290,16 +304,18 @@ console.log("Final products fetched:", allProducts.length);
 
     /* ================= PAGINATION ================= */
 
-    const currentPage = Math.max(1, Number(page) || 1);
-    const limit = 12;
-    const total = formattedProducts.length;
-    const totalPages = Math.max(1, Math.ceil(total / limit));
+    // const currentPage = Math.max(1, Number(page) || 1);
+    // const limit = 12;
+    // const total = formattedProducts.length;
+    // const totalPages = Math.max(1, Math.ceil(total / limit));
 
-    const paginatedProducts = formattedProducts.slice(
-      (currentPage - 1) * limit,
-      currentPage * limit
-    );
-
+    // const paginatedProducts = formattedProducts.slice(
+    //   (currentPage - 1) * limit,
+    //   currentPage * limit
+    // );
+const total = count || 0;
+const totalPages = Math.max(1, Math.ceil(total / limit));
+const paginatedProducts = formattedProducts;
     /* ================= BUILD FILTER OPTIONS ================= */
 
     const vendorSet = new Set();
