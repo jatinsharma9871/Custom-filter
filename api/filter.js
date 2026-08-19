@@ -105,7 +105,6 @@ position
 
 let query = supabase
   .from("products")
-  .select(PRODUCT_COLUMNS)
   .eq("status", "ACTIVE")
   .eq("published", true)
   .gt("inventory_quantity", 0);
@@ -132,6 +131,30 @@ if (minPrice) {
 
 if (maxPrice) {
   query = query.lte("price", Number(maxPrice));
+}
+switch (sort_by) {
+  case "price-ascending":
+    query = query.order("price", { ascending: true });
+    break;
+
+  case "price-descending":
+    query = query.order("price", { ascending: false });
+    break;
+
+  case "title-ascending":
+    query = query.order("title", { ascending: true });
+    break;
+
+  case "title-descending":
+    query = query.order("title", { ascending: false });
+    break;
+
+  case "created-ascending":
+    query = query.order("created_at", { ascending: true });
+    break;
+
+  default:
+    query = query.order("created_at", { ascending: false });
 }
 const currentPage = Math.max(1, Number(page) || 1);
 const limit = 12;
@@ -280,27 +303,8 @@ console.log("Final products fetched:", allProducts.length);
 
     /* ================= SORT ================= */
 
-    const sortMap = {
-      manual: (a, b) => Number(a.position || 0) - Number(b.position || 0),
-      "price-ascending": (a, b) => a.price - b.price,
-      "price-descending": (a, b) => b.price - a.price,
-      "title-ascending": (a, b) =>
-        String(a.title || "").localeCompare(String(b.title || "")),
-      "title-descending": (a, b) =>
-        String(b.title || "").localeCompare(String(a.title || "")),
-      "created-descending": (a, b) =>
-        new Date(b.created_at) - new Date(a.created_at),
-      "created-ascending": (a, b) =>
-        new Date(a.created_at) - new Date(b.created_at)
-    };
 
-    if (!sort_by) {
-      formattedProducts.sort(
-        (a, b) => new Date(b.created_at) - new Date(a.created_at)
-      );
-    } else {
-      formattedProducts.sort(sortMap[sort_by] || (() => 0));
-    }
+    
 
     /* ================= PAGINATION ================= */
 
