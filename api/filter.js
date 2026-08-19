@@ -73,7 +73,7 @@ export default async function handler(req, res) {
 
 let cachedFilters = null;
 console.log("Collection:", normalizedCollection);
-if (normalizedCollection && normalizedCollection !== "alle") {
+if (normalizedCollection && normalizedCollection !== "all") {
   const { data } = await supabase
     .from("filter_cache")
     .select("filters")
@@ -105,10 +105,11 @@ position
 
 let query = supabase
   .from("products")
+  .select(PRODUCT_COLUMNS)
   .eq("status", "ACTIVE")
   .eq("published", true)
   .gt("inventory_quantity", 0);
-  
+
 if (normalizedCollection && normalizedCollection !== "all") {
   query = query.filter(
     "collection_handle",
@@ -156,13 +157,9 @@ switch (sort_by) {
   default:
     query = query.order("created_at", { ascending: false });
 }
-const { data: allProducts, error } = await query.select(PRODUCT_COLUMNS);
+const { data: allProducts, error } = await query;
 
-if (error) {
-  return res.status(500).json({
-    error: error.message
-  });
-}
+
 
 if (error) {
   return res.status(500).json({
@@ -316,9 +313,7 @@ console.log("Final products fetched:", allProducts.length);
       (currentPage - 1) * limit,
       currentPage * limit
     );
-const total = count || 0;
-const totalPages = Math.max(1, Math.ceil(total / limit));
-const paginatedProducts = formattedProducts;
+
     /* ================= BUILD FILTER OPTIONS ================= */
 
     const vendorSet = new Set();
