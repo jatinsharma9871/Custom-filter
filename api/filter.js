@@ -73,7 +73,7 @@ export default async function handler(req, res) {
 
 let cachedFilters = null;
 console.log("Collection:", normalizedCollection);
-if (normalizedCollection && normalizedCollection !== "all") {
+if (normalizedCollection && normalizedCollection !== "alle") {
   const { data } = await supabase
     .from("filter_cache")
     .select("filters")
@@ -83,13 +83,33 @@ if (normalizedCollection && normalizedCollection !== "all") {
   cachedFilters = data?.filters || null;
 }
 
+const PRODUCT_COLUMNS = `
+id,
+title,
+handle,
+vendor,
+product_type,
+price,
+compare_at_price,
+image,
+images,
+variants,
+fabric,
+color,
+delivery_timeline,
+inventory_quantity,
+created_at,
+collection_handle,
+position
+`;
+
 let query = supabase
   .from("products")
-  .select("*")
+  .select(PRODUCT_COLUMNS)
   .eq("status", "ACTIVE")
   .eq("published", true)
   .gt("inventory_quantity", 0);
-
+  
 if (normalizedCollection && normalizedCollection !== "all") {
   query = query.filter(
     "collection_handle",
@@ -192,22 +212,7 @@ console.log("Final products fetched:", allProducts.length);
       });
     }
 
-    // Price
-    // if (minPrice || maxPrice) {
-    //   products = products.filter((product) => {
-    //     const price = Number(product.price || 0);
-
-    //     if (minPrice && price < Number(minPrice)) return false;
-    //     if (maxPrice && price > Number(maxPrice)) return false;
-
-    //     return true;
-    //   });
-    // }
-
-    // Color
-    
-
-    // Size — added
+  
     if (size) {
       const selectedSizes = toList(size).map(normalize);
 
