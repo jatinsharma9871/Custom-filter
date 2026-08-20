@@ -199,7 +199,13 @@ if (error) {
 console.log("Final products fetched:", allProducts.length);
 
     if (!allProducts?.length) {
+      console.log({
+  total,
+  totalPages,
+  currentPage
+});
       return res.status(200).json({
+        
         filters: {},
         products: [],
         pagination: {
@@ -370,6 +376,11 @@ console.log("Filtered products:", formattedProducts.length);
 
     const productPrices = formattedProducts.map((product) => product.price);
 console.log(JSON.stringify(cachedFilters, null, 2));
+console.log({
+  total,
+  totalPages,
+  currentPage
+});
     return res.status(200).json({
       filters: cachedFilters || {
   vendors:
