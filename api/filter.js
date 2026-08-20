@@ -159,7 +159,7 @@ switch (sort_by) {
 }
 const { data: allProducts, error } = await query;
 
-
+console.log("Supabase products:", allProducts?.length);
 
 if (error) {
   return res.status(500).json({
