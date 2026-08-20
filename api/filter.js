@@ -296,7 +296,7 @@ console.log("Final products fetched:", allProducts.length);
           0
       )
     }));
-
+console.log("Filtered products:", formattedProducts.length);
     /* ================= SORT ================= */
 
 
