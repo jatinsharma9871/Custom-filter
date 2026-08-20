@@ -219,6 +219,7 @@ console.log("Final products fetched:", allProducts.length);
     /* ================= APPLY FILTERS ================= */
 
     let products = [...allProducts];
+    console.log("Selected color:", color);
 // const { data, error } = await query;
     // Designer
     // if (vendor) {
@@ -239,6 +240,21 @@ console.log("Final products fetched:", allProducts.length);
     // }
 
     // Fabric
+    if (color) {
+  const selectedColors = toList(color).map(normalize);
+
+  products = products.filter((product) => {
+    const productColors = safeParse(product.color)
+      .flatMap(c => String(c).split(","))
+      .map(normalize);
+
+    return selectedColors.some(selected =>
+      productColors.includes(selected)
+    );
+  });
+
+  console.log("After color:", products.length);
+}
     if (fabric) {
       const selectedFabrics = toList(fabric).map(normalize);
 
