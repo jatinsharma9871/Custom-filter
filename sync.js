@@ -324,6 +324,24 @@ node.variants?.edges?.forEach(({ node: variant }) => {
   collection: node.productType,
   collection_handle: collectionHandles,
   price: getPrice(node.variants),
+  variants: JSON.stringify(
+  node.variants.edges.map(({ node: variant }) => ({
+    price: Number(variant.price),
+    compare_at_price: Number(variant.compareAtPrice || 0),
+
+    options: variant.selectedOptions,
+
+    color:
+      variant.selectedOptions.find(
+        o => o.name.toLowerCase() === "color"
+      )?.value || null,
+
+    size:
+      variant.selectedOptions.find(
+        o => o.name.toLowerCase() === "size"
+      )?.value || null
+  }))
+),
   compare_at_price: Number.parseFloat(
     node.variants?.edges?.[0]?.node?.compareAtPrice || 0
   ),
