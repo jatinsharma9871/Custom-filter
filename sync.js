@@ -222,14 +222,19 @@ collections(first: 250) {
     }
   }
 }
-        variants(first: 250) {
-          edges {
-            node {
-              price
-              compareAtPrice
-            }
-          }
-        }
+       variants(first:250){
+  edges{
+    node{
+      price
+      compareAtPrice
+
+      selectedOptions{
+        name
+        value
+      }
+    }
+  }
+}
       }
     }
   }
@@ -293,44 +298,45 @@ const productConnection = data.data.products;
         
 
       const tags = node.tags || [];
+      const colors = new Set();
+      const tagColor = extractTag(tags, "Color");
+      if (tagColor) {
+  colors.add(tagColor);
+}
+
+// Color from variant options
+node.variants?.edges?.forEach(({ node: variant }) => {
+  variant.selectedOptions?.forEach(option => {
+    if (option.name.toLowerCase() === "color") {
+      colors.add(option.value.trim());
+    }
+  });
+});
       const collectionHandles =
   node.collections?.edges?.map(c => c.node.handle) || [];
 
       return {
-        id: node.id,
+  id: node.id,
+  title: node.title,
+  handle: node.handle,
+  vendor: node.vendor,
+  product_type: node.productType,
+  collection: node.productType,
+  collection_handle: collectionHandles,
+  price: getPrice(node.variants),
+  compare_at_price: Number.parseFloat(
+    node.variants?.edges?.[0]?.node?.compareAtPrice || 0
+  ),
+  image: getFirstImage(node.images),
+  images: JSON.stringify(getAllImages(node.images)),
 
-        title: node.title,
+  // Save all colors
+  color: JSON.stringify([...colors]),
 
-        handle: node.handle,
-
-        vendor: node.vendor,
-
-        product_type: node.productType,
-
-        collection: node.productType,
-
-        collection_handle: collectionHandles,
-
-        price: getPrice(node.variants),
-
-        compare_at_price:
-          Number.parseFloat(
-            node.variants?.edges?.[0]?.node?.compareAtPrice || 0
-          ),
-
-        image: getFirstImage(node.images),
-
-       images: JSON.stringify(getAllImages(node.images)),
-
-        color: extractTag(tags, "Color"),
-
-        size: extractTag(tags, "Size"),
-
-        fabric: extractTag(tags, "Fabric"),
-
-        delivery_time: extractTag(tags, "Delivery"),
-        
-      };
+  size: extractTag(tags, "Size"),
+  fabric: extractTag(tags, "Fabric"),
+  delivery_time: extractTag(tags, "Delivery"),
+};
 
     });
 
