@@ -222,13 +222,14 @@ collections(first: 250) {
     }
   }
 }
-       variants(first:250){
-  edges{
-    node{
+       variants(first:250) {
+  edges {
+    node {
       price
       compareAtPrice
-
-      selectedOptions{
+      inventoryQuantity
+      availableForSale
+      selectedOptions {
         name
         value
       }
@@ -299,62 +300,85 @@ const productConnection = data.data.products;
 
       const tags = node.tags || [];
       const colors = new Set();
-      const tagColor = extractTag(tags, "Color");
-      if (tagColor) {
+      const variants = node.variants.edges.map(({ node: variant }) => ({
+  price: Number(variant.price),
+  compare_at_price: Number(variant.compareAtPrice || 0),
+  inventory_quantity: Number(variant.inventoryQuantity || 0),
+ available: Boolean(variant.availableForSale),
+
+  options: variant.selectedOptions,
+
+  color:
+    variant.selectedOptions.find(
+      o => o.name.toLowerCase() === "color"
+    )?.value || null,
+
+  size:
+    variant.selectedOptions.find(
+      o => o.name.toLowerCase() === "size"
+    )?.value || null
+}));
+      variants.forEach((variant) => {
+  if (variant.color) {
+    colors.add(variant.color.trim());
+  }
+});
+
+const tagColor = extractTag(tags, "Color");
+if (tagColor) {
   colors.add(tagColor);
 }
-
-// Color from variant options
-node.variants?.edges?.forEach(({ node: variant }) => {
-  variant.selectedOptions?.forEach(option => {
-    if (option.name.toLowerCase() === "color") {
-      colors.add(option.value.trim());
-    }
-  });
-});
       const collectionHandles =
   node.collections?.edges?.map(c => c.node.handle) || [];
 
       return {
-  id: node.id,
-  title: node.title,
-  handle: node.handle,
-  vendor: node.vendor,
-  product_type: node.productType,
-  collection: node.productType,
-  collection_handle: collectionHandles,
-  price: getPrice(node.variants),
-  variants: JSON.stringify(
-  node.variants.edges.map(({ node: variant }) => ({
-    price: Number(variant.price),
-    compare_at_price: Number(variant.compareAtPrice || 0),
+        id: node.id,
 
-    options: variant.selectedOptions,
+        title: node.title,
 
-    color:
-      variant.selectedOptions.find(
-        o => o.name.toLowerCase() === "color"
-      )?.value || null,
+        handle: node.handle,
 
-    size:
-      variant.selectedOptions.find(
-        o => o.name.toLowerCase() === "size"
-      )?.value || null
-  }))
+        vendor: node.vendor,
+
+        product_type: node.productType,
+
+        collection: node.productType,
+        
+
+        collection_handle: collectionHandles,
+
+        price: getPrice(node.variants),
+variants: JSON.stringify(variants),
+
+inventory_quantity: variants.reduce(
+  (sum, v) => sum + v.inventory_quantity,
+  0
 ),
-  compare_at_price: Number.parseFloat(
-    node.variants?.edges?.[0]?.node?.compareAtPrice || 0
-  ),
-  image: getFirstImage(node.images),
-  images: JSON.stringify(getAllImages(node.images)),
 
-  // Save all colors
-  color: JSON.stringify([...colors]),
+published: true,
 
-  size: extractTag(tags, "Size"),
-  fabric: extractTag(tags, "Fabric"),
-  delivery_time: extractTag(tags, "Delivery"),
-};
+status: "ACTIVE",
+
+
+
+        compare_at_price:
+          Number.parseFloat(
+            node.variants?.edges?.[0]?.node?.compareAtPrice || 0
+          ),
+
+        image: getFirstImage(node.images),
+
+       images: JSON.stringify(getAllImages(node.images)),
+
+       color: JSON.stringify([...colors]),
+
+        size: extractTag(tags, "Size"),
+
+        fabric: extractTag(tags, "Fabric"),
+
+        delivery_time: extractTag(tags, "Delivery"),
+        
+      };
 
     });
 
@@ -524,7 +548,20 @@ async function buildFilterCache() {
       addValues(product.color, c.colors);
       addValues(product.fabric, c.fabrics);
       addValues(product.delivery_time, c.delivery);
-      addValues(product.size, c.sizes);
+ let variants = [];
+
+try {
+  variants = JSON.parse(product.variants || "[]");
+} catch {}
+
+variants.forEach((variant) => {
+  if (
+    variant.size &&
+    (variant.available || variant.inventory_quantity > 0)
+  ) {
+    c.sizes.add(variant.size.trim());
+  }
+});
 
     });
   }
