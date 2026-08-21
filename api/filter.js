@@ -397,6 +397,15 @@ console.log({
   totalPages,
   currentPage
 });
+console.log("Cached filters exists:", !!cachedFilters);
+
+if (cachedFilters) {
+  console.log("Cached colors:", cachedFilters.colors?.length);
+  console.log("Cached sizes:", cachedFilters.sizes?.length);
+  console.log("Cached vendors:", cachedFilters.vendors?.length);
+  console.log("Cached productTypes:", cachedFilters.productTypes?.length);
+  console.log("Cached fabrics:", cachedFilters.fabrics?.length);
+}
     return res.status(200).json({
       filters: cachedFilters || {
   vendors:

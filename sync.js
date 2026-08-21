@@ -9,9 +9,71 @@ const SHOP =
   process.env.SHOPIFY_STORE ||
   "the-sverve.myshopify.com";
 
-const TOKEN =
-  process.env.SHOPIFY_ACCESS_TOKEN ||
-  "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";
+let TOKEN = null;
+let TOKEN_EXPIRES = 0;
+
+async function getAccessToken() {
+  if (TOKEN && Date.now() < TOKEN_EXPIRES - 60000) {
+    return TOKEN;
+  }
+
+  // Try cached token from Supabase
+  const { data } = await supabase
+    .from("shopify_config")
+    .select("access_token, expires_at")
+    .eq("id", 1)
+    .single();
+
+  if (
+    data?.access_token &&
+    data?.expires_at &&
+    new Date(data.expires_at).getTime() > Date.now() + 60000
+  ) {
+    TOKEN = data.access_token;
+    TOKEN_EXPIRES = new Date(data.expires_at).getTime();
+    return TOKEN;
+  }
+
+  console.log("Generating new Shopify token...");
+
+  const response = await fetch(
+    `https://${SHOP}/admin/oauth/access_token`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: process.env.SHOPIFY_CLIENT_ID || "53dfed9eb56ffec51c0f8e66178afb55",
+        client_secret: process.env.SHOPIFY_CLIENT_SECRET || "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"
+      })
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Token request failed: ${response.status}`
+    );
+  }
+
+  const tokenData = await response.json();
+
+  TOKEN = tokenData.access_token;
+  TOKEN_EXPIRES =
+    Date.now() + tokenData.expires_in * 1000;
+
+  await supabase
+    .from("shopify_config")
+    .upsert({
+      id: 1,
+      access_token: TOKEN,
+      expires_at: new Date(TOKEN_EXPIRES).toISOString(),
+      updated_at: new Date().toISOString()
+    });
+
+  return TOKEN;
+}
 
 const API_VERSION =
   process.env.SHOPIFY_API_VERSION ||
@@ -22,7 +84,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || "sb_publishable_7QPCLDGw0t6YloSbtA6Y0w_weJ86qO5"
 );
 
-if (!SHOP || !TOKEN) {
+if (!SHOP) {
   throw new Error("Missing Shopify credentials.");
 }
 
@@ -66,15 +128,17 @@ function getPrice(variants) {
 }
 
 async function shopifyRequest(query, variables = {}) {
-
+ const token = await getAccessToken();
   const response = await fetch(
     `https://${SHOP}/admin/api/${API_VERSION}/graphql.json`,
     {
       method: "POST",
-      headers: {
-        "X-Shopify-Access-Token": TOKEN,
-        "Content-Type": "application/json",
-      },
+    
+
+headers: {
+  "X-Shopify-Access-Token": token,
+  "Content-Type": "application/json",
+},
       body: JSON.stringify({
         query,
         variables,
@@ -158,7 +222,7 @@ collections(first: 250) {
     }
   }
 }
-        variants(first: 10) {
+        variants(first: 250) {
           edges {
             node {
               price
@@ -226,6 +290,7 @@ const productConnection = data.data.products;
   `Batch ${batch}: Received ${edges.length} products`
 );
       const products = edges.map(({ node }) => {
+        
 
       const tags = node.tags || [];
       const collectionHandles =
