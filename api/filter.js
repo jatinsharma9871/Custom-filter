@@ -204,6 +204,8 @@ console.log("Final products fetched:", allProducts.length);
   totalPages,
   currentPage
 });
+console.log("Colors from products:", colors);
+console.log("Colors from cache:", cachedFilters?.colors);
       return res.status(200).json({
         
         filters: {},
