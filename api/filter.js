@@ -407,7 +407,7 @@ if (cachedFilters) {
   console.log("Cached fabrics:", cachedFilters.fabrics?.length);
 }
     return res.status(200).json({
-      filters: cachedFilters || {
+     filters: {
   vendors:
     vendors.length > 1
       ? sortAlpha(vendors).map(name => ({ name }))
