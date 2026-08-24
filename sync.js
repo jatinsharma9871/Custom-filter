@@ -318,6 +318,12 @@ const productConnection = data.data.products;
       o => o.name.toLowerCase() === "size"
     )?.value || null
 }));
+
+console.log(
+  node.title,
+  JSON.stringify(node.variants.edges[0]?.node?.selectedOptions, null, 2)
+);
+
       variants.forEach((variant) => {
   if (variant.color) {
     colors.add(variant.color.trim());
@@ -546,6 +552,20 @@ async function buildFilterCache() {
       };
 
       addValues(product.color, c.colors);
+      console.log(
+  "Product:",
+  product.title,
+  "Stored color:",
+  product.color,
+  "Parsed:",
+  (() => {
+    try {
+      return JSON.parse(product.color);
+    } catch {
+      return product.color;
+    }
+  })()
+);
       addValues(product.fabric, c.fabrics);
       addValues(product.delivery_time, c.delivery);
  let variants = [];
