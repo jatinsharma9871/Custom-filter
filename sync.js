@@ -387,7 +387,7 @@ status: "ACTIVE",
 
         fabric: extractTag(tags, "Fabric"),
 
-        delivery_time: extractTag(tags, "Delivery"),
+        delivery_timeline: extractTag(tags, "Delivery"),
         
       };
 
@@ -485,7 +485,7 @@ vendor,
 product_type,
 color,
 fabric,
-delivery_time,
+delivery_timeline,
 price,
 variants
 `)
@@ -577,7 +577,7 @@ variants
   })()
 );
       addValues(product.fabric, c.fabrics);
-      addValues(product.delivery_time, c.delivery);
+      addValues(product.delivery_timeline, c.delivery);
  let variants = [];
 
 try {
@@ -598,10 +598,6 @@ variants.forEach((variant) => {
 
  console.log(`Collections Found: ${Object.keys(collections).length}`);
 
-await supabase
-  .from("filter_cache")
-  .delete()
-  .neq("collection_handle", "");
 
 
 const rows = Object.entries(collections).map(([handle, data]) => ({
@@ -611,7 +607,7 @@ const rows = Object.entries(collections).map(([handle, data]) => ({
     productTypes: [...data.productTypes].sort().map(name => ({ name })),
     colors: [...data.colors].sort().map(name => ({ name })),
     fabrics: [...data.fabrics].sort(),
-    delivery_time: [...data.delivery].sort(),
+    delivery_timeline: [...data.delivery].sort(),
     sizes: [...data.sizes].sort().map(name => ({
       name,
       available: true
