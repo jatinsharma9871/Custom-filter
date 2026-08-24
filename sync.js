@@ -393,12 +393,7 @@ status: "ACTIVE",
        images: JSON.stringify(getAllImages(node.images)),
 
        color: JSON.stringify([...colors]),
-if (!colors.size) {
-    console.warn(
-        "No colors:",
-        node.title
-    );
-},
+
         size: extractTag(tags, "Size"),
 
         fabric: extractTag(tags, "Fabric"),
