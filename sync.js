@@ -204,8 +204,14 @@ query GetProducts($cursor: String) {
         title
         handle
         vendor
+        metafield(namespace: "custom", key: "color1") {
+  value
+}
         productType
         tags
+        metafield(namespace: "custom", key: "color1") {
+  value
+}
 
         images(first: 20) {
           edges {
@@ -298,7 +304,37 @@ const productConnection = data.data.products;
         
 
       const tags = node.tags || [];
-      const colors = new Set();
+     console.log("\n================================");
+console.log("Product:", node.title);
+console.log("Tags:", node.tags);
+
+console.log(
+  "Variant Options:",
+  JSON.stringify(
+    node.variants.edges.map(v => v.node.selectedOptions),
+    null,
+    2
+  )
+);
+console.log("================================");
+    const colors = new Set();
+const rawColor = node.metafield?.value;
+
+if (rawColor) {
+  try {
+    JSON.parse(rawColor).forEach(c => colors.add(c.trim()));
+  } catch {
+    colors.add(rawColor.trim());
+  }
+}
+
+if (node.metafield?.value) {
+  node.metafield.value
+    .split(",")
+    .map(color => color.trim())
+    .filter(Boolean)
+    .forEach(color => colors.add(color));
+}
       const variants = node.variants.edges.map(({ node: variant }) => ({
   price: Number(variant.price),
   compare_at_price: Number(variant.compareAtPrice || 0),
@@ -323,16 +359,6 @@ console.log(
   JSON.stringify(node.variants.edges[0]?.node?.selectedOptions, null, 2)
 );
 
-      variants.forEach((variant) => {
-  if (variant.color) {
-    colors.add(variant.color.trim());
-  }
-});
-
-const tagColor = extractTag(tags, "Color");
-if (tagColor) {
-  colors.add(tagColor);
-}
       const collectionHandles =
   node.collections?.edges?.map(c => c.node.handle) || [];
 if (!collectionHandles.length) {
@@ -342,6 +368,11 @@ if (!collectionHandles.length) {
         node.handle
     );
 }
+console.log({
+  product: node.title,
+  metafieldColor: node.metafield?.value,
+  storedColors: [...colors]
+});
       return {
         id: node.id,
 

@@ -159,7 +159,7 @@ switch (sort_by) {
 const { data: allProducts, error } = await query;
 console.log({
   collection: normalizedCollection,
-  fetchedProducts: allProducts.length
+  fetchedProducts: allProducts.length || 0
 });
 if (error) {
   console.error("Supabase Error:", error);
@@ -415,11 +415,9 @@ const productTypes =
       : v
   );
   
-  const colors =
-    cachedFilters
-        ? normalizeCached(cachedFilters.colors)
-        : [...colorSet];
-
+  const colors = cachedFilters
+  ? normalizeCached(cachedFilters.colors).filter(Boolean)
+  : [...colorSet].filter(Boolean);
 
   
 console.log({
