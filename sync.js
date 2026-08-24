@@ -60,29 +60,18 @@ async function getAccessToken() {
   const tokenData = await response.json();
 
   TOKEN = tokenData.access_token;
-  TOKEN_EXPIRES =
-    Date.now() + tokenData.expires_in * 1000;
+TOKEN_EXPIRES = Date.now() + tokenData.expires_in * 1000;
+
 await supabase
-  .from("filter_cache")
-  .delete()
-  .neq("collection_handle", "");
-
-  await supabase
-  .from("filter_cache")
-  .upsert(rows, {
-    onConflict: "collection_handle"
+  .from("shopify_config")
+  .upsert({
+    id: 1,
+    access_token: TOKEN,
+    expires_at: new Date(TOKEN_EXPIRES).toISOString(),
+    updated_at: new Date().toISOString()
   });
-  
-  await supabase
-    .from("shopify_config")
-    .upsert({
-      id: 1,
-      access_token: TOKEN,
-      expires_at: new Date(TOKEN_EXPIRES).toISOString(),
-      updated_at: new Date().toISOString()
-    });
 
-  return TOKEN;
+return TOKEN;
 }
 
 const API_VERSION =
@@ -398,7 +387,7 @@ status: "ACTIVE",
 
         fabric: extractTag(tags, "Fabric"),
 
-        delivery_timeline: extractTag(tags, "Delivery"),
+        delivery_time: extractTag(tags, "Delivery"),
         
       };
 
@@ -588,7 +577,7 @@ variants
   })()
 );
       addValues(product.fabric, c.fabrics);
-      addValues(product.delivery_timeline, c.delivery);
+      addValues(product.delivery_time, c.delivery);
  let variants = [];
 
 try {
@@ -607,9 +596,13 @@ variants.forEach((variant) => {
     });
   }
 
-  console.log(
-    `Collections Found: ${Object.keys(collections).length}`
-  );
+ console.log(`Collections Found: ${Object.keys(collections).length}`);
+
+await supabase
+  .from("filter_cache")
+  .delete()
+  .neq("collection_handle", "");
+
 
 const rows = Object.entries(collections).map(([handle, data]) => ({
   collection_handle: handle,
@@ -618,7 +611,7 @@ const rows = Object.entries(collections).map(([handle, data]) => ({
     productTypes: [...data.productTypes].sort().map(name => ({ name })),
     colors: [...data.colors].sort().map(name => ({ name })),
     fabrics: [...data.fabrics].sort(),
-    delivery_timeline: [...data.delivery].sort(),
+    delivery_time: [...data.delivery].sort(),
     sizes: [...data.sizes].sort().map(name => ({
       name,
       available: true
@@ -630,7 +623,11 @@ const rows = Object.entries(collections).map(([handle, data]) => ({
   },
   updated_at: new Date().toISOString()
 }));
-
+await supabase
+  .from("filter_cache")
+  .delete()
+  .neq("collection_handle", "");
+  
 const { error: cacheError } = await supabase
   .from("filter_cache")
   .upsert(rows, {
