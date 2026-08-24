@@ -398,7 +398,7 @@ if (!colors.size) {
         "No colors:",
         node.title
     );
-}
+},
         size: extractTag(tags, "Size"),
 
         fabric: extractTag(tags, "Fabric"),
