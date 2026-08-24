@@ -168,11 +168,6 @@ if (error) {
 
 console.log("Supabase products:", allProducts?.length || 0);
 
-if (error) {
-  return res.status(500).json({
-    error: error.message
-  });
-}
 
 //    let allProducts = [];
 // let from = 0;
@@ -253,17 +248,14 @@ console.log("Final products fetched:", allProducts.length);
     if (typeof item === "object" && item !== null) {
       return Object.values(item);
     }
-
     return String(item).split(",");
   })
-  .map(item => item.trim())
-  .filter(Boolean)
-  .forEach(color => colorSet.add(color));
+  .map(normalize)
+  .filter(Boolean);
 
-
-    return selectedColors.some(selected =>
-      productColors.includes(selected)
-    );
+return selectedColors.some(selected =>
+  productColors.includes(selected)
+);
   });
 
   console.log("After color:", products.length);
@@ -369,10 +361,17 @@ console.log("Filtered products:", formattedProducts.length);
       }
 
       safeParse(product.color)
-  .flatMap(item => String(item).split(","))
+  .flatMap(item => {
+    if (typeof item === "object" && item !== null) {
+      return Object.values(item);
+    }
+    return String(item).split(",");
+  })
   .map(item => item.trim())
   .filter(Boolean)
   .forEach(color => colorSet.add(color));
+
+
 console.log({
   colors: [...colorSet],
   vendors: [...vendorSet],
@@ -475,17 +474,18 @@ if (cachedFilters) {
   delivery_timeline:
     delivery.length ? sortAlpha(delivery) : [],
 
-  sizes:
-  Array.isArray(sizes)
-    ? sizes.map(item => {
-        if (typeof item === "object") return item;
-
-        return {
-          name: item,
-          available: sizeAvailability[item]
-        };
-      })
-    : [],
+sizes: Array.isArray(sizes)
+  ? sizes
+      .map(item =>
+        typeof item === "object"
+          ? item
+          : {
+              name: item,
+              available: sizeAvailability[item]
+            }
+      )
+      .sort((a, b) => a.name.localeCompare(b.name))
+  : [],
   priceRange: {
     min: productPrices.length ? Math.min(...productPrices) : 0,
     max: productPrices.length ? Math.max(...productPrices) : 0
