@@ -604,6 +604,13 @@ const addValues = (value, set) => {
 
 
       addValues(product.color, c.colors);
+      if (handle === "jayati-goenka") {
+  console.log(
+    product.title,
+    product.color,
+    [...c.colors]
+  );
+}
       console.log(
   "Product:",
   product.title,
