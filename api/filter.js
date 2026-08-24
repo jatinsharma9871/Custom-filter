@@ -107,8 +107,7 @@ let query = supabase
   .from("products")
   .select(PRODUCT_COLUMNS)
   .eq("status", "ACTIVE")
-  .eq("published", true)
-  .gt("inventory_quantity", 0);
+  .eq("published", true);
 
 if (normalizedCollection && normalizedCollection !== "all") {
   query = query.filter(
@@ -117,7 +116,10 @@ if (normalizedCollection && normalizedCollection !== "all") {
     `["${normalizedCollection}"]`
   );
 }
-
+console.log({
+  collection: normalizedCollection,
+  fetchedProducts: allProducts.length
+});
 if (vendor) {
   query = query.in("vendor", toList(vendor));
 }
@@ -159,15 +161,12 @@ switch (sort_by) {
 }
 const { data: allProducts, error } = await query;
 
-const { data: allProducts, error } = await query;
-
 if (error) {
-  console.error("Supabase Error:");
-  console.error(error);
-  return res.status(500).json(error);
+  console.error("Supabase Error:", error);
+  return res.status(500).json({ error: error.message });
 }
 
-console.log("Supabase products:", allProducts.length);
+console.log("Supabase products:", allProducts?.length || 0);
 
 if (error) {
   return res.status(500).json({
@@ -255,8 +254,15 @@ console.log("Colors from cache:", cachedFilters?.colors);
 
   products = products.filter((product) => {
     const productColors = safeParse(product.color)
-      .flatMap(c => String(c).split(","))
-      .map(normalize);
+  .flatMap(item => {
+    if (typeof item === "object" && item !== null) {
+      return Object.values(item);
+    }
+
+    return String(item).split(",");
+  })
+  .map(normalize)
+  .filter(Boolean);
 
     return selectedColors.some(selected =>
       productColors.includes(selected)
@@ -310,11 +316,11 @@ console.log("Colors from cache:", cachedFilters?.colors);
 
     /* ================= INVENTORY FILTER ================= */
 
-    // products = products.filter((product) => {
-    //   if (Number(product.inventory_quantity) > 0) return true;
+    products = products.filter((product) => {
+      if (Number(product.inventory_quantity) > 0) return true;
 
-    //   return safeParse(product.variants).some(variantIsAvailable);
-    // });
+      return safeParse(product.variants).some(variantIsAvailable);
+    });
 
     /* ================= FORMAT PRODUCTS ================= */
 
@@ -355,6 +361,12 @@ console.log("Filtered products:", formattedProducts.length);
     const deliverySet = new Set();
     const sizeAvailability = {};
 
+    console.log({
+  colors: [...colorSet],
+  vendors: [...vendorSet],
+  productTypes: [...typeSet]
+});
+
     filterSource.forEach((product) => {
       if (product.vendor) {
         vendorSet.add(String(product.vendor).trim());
@@ -393,12 +405,32 @@ console.log("Filtered products:", formattedProducts.length);
       });
     });
 
-    const vendors = [...vendorSet];
-    const productTypes = [...typeSet];
-    const colors = [...colorSet];
-    const fabrics = [...fabricSet];
-    const delivery = [...deliverySet];
-    const sizes = Object.keys(sizeAvailability);
+   const vendors =
+  cachedFilters?.vendors?.map(v => v.name ?? v) ??
+  [...vendorSet];
+
+const productTypes =
+  cachedFilters?.productTypes?.map(v => v.name ?? v) ??
+  [...typeSet];
+
+const colors =
+  cachedFilters?.colors?.map(v => v.name ?? v) ??
+  [...colorSet];
+console.log({
+  cachedColors: cachedFilters?.colors,
+  generatedColors: [...colorSet]
+});
+const fabrics =
+  cachedFilters?.fabrics ??
+  [...fabricSet];
+
+const delivery =
+  cachedFilters?.delivery_timeline ??
+  [...deliverySet];
+
+const sizes =
+  cachedFilters?.sizes?.map(v => v.name ?? v) ??
+  Object.keys(sizeAvailability);
 
     const productPrices = formattedProducts.map((product) => product.price);
 console.log(JSON.stringify(cachedFilters, null, 2));
@@ -419,27 +451,27 @@ if (cachedFilters) {
     return res.status(200).json({
      filters: {
   vendors:
-    vendors.length > 1
+    vendors.length
       ? sortAlpha(vendors).map(name => ({ name }))
       : [],
 
   productTypes:
-    productTypes.length > 1
+    productTypes.length
       ? sortAlpha(productTypes).map(name => ({ name }))
       : [],
 
-  colors:
-    colors.length > 1
-      ? sortAlpha(colors).map(name => ({ name }))
-      : [],
+ colors:
+  colors.length
+    ? sortAlpha(colors).map(name => ({ name }))
+    : [],
 
-  fabrics: fabrics.length > 1 ? sortAlpha(fabrics) : [],
+  fabrics: fabrics.length ? sortAlpha(fabrics) : [],
 
   delivery_timeline:
-    delivery.length > 1 ? sortAlpha(delivery) : [],
+    delivery.length ? sortAlpha(delivery) : [],
 
   sizes:
-    sizes.length > 1
+    sizes.length
       ? sortAlpha(sizes).map(name => ({
           name,
           available: sizeAvailability[name]
