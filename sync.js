@@ -62,7 +62,17 @@ async function getAccessToken() {
   TOKEN = tokenData.access_token;
   TOKEN_EXPIRES =
     Date.now() + tokenData.expires_in * 1000;
+await supabase
+  .from("filter_cache")
+  .delete()
+  .neq("collection_handle", "");
 
+  await supabase
+  .from("filter_cache")
+  .upsert(rows, {
+    onConflict: "collection_handle"
+  });
+  
   await supabase
     .from("shopify_config")
     .upsert({
@@ -336,7 +346,13 @@ if (tagColor) {
 }
       const collectionHandles =
   node.collections?.edges?.map(c => c.node.handle) || [];
-
+if (!collectionHandles.length) {
+    console.warn(
+        "No collections:",
+        node.title,
+        node.handle
+    );
+}
       return {
         id: node.id,
 
@@ -377,12 +393,17 @@ status: "ACTIVE",
        images: JSON.stringify(getAllImages(node.images)),
 
        color: JSON.stringify([...colors]),
-
+if (!colors.size) {
+    console.warn(
+        "No colors:",
+        node.title
+    );
+}
         size: extractTag(tags, "Size"),
 
         fabric: extractTag(tags, "Fabric"),
 
-        delivery_time: extractTag(tags, "Delivery"),
+        delivery_timeline: extractTag(tags, "Delivery"),
         
       };
 
@@ -474,18 +495,16 @@ async function buildFilterCache() {
   const { data: products, error } = await supabase
     .from("products")
     .select(`
-      collection_handle,
-      vendor,
-      product_type,
-      color,
-      size,
-      fabric,
-      delivery_time,
-      price,
-      inventory_quantity,
-      variants
-    `);
-
+title,
+collection_handle,
+vendor,
+product_type,
+color,
+fabric,
+delivery_time,
+price,
+variants
+`)
   if (error) throw error;
 
   const collections = {};
@@ -544,11 +563,18 @@ async function buildFilterCache() {
           arr = String(value).split(",");
         }
 
-        arr
-          .flatMap(v => String(v).split(","))
-          .map(v => v.trim())
-          .filter(Boolean)
-          .forEach(v => set.add(v));
+      
+          arr
+.flatMap(v => {
+    if (typeof v === "object" && v !== null) {
+        return Object.values(v);
+    }
+
+    return String(v).split(",");
+})
+.map(v => v.trim())
+.filter(Boolean)
+.forEach(v => set.add(v));
       };
 
       addValues(product.color, c.colors);
@@ -567,7 +593,7 @@ async function buildFilterCache() {
   })()
 );
       addValues(product.fabric, c.fabrics);
-      addValues(product.delivery_time, c.delivery);
+      addValues(product.delivery_timeline, c.delivery);
  let variants = [];
 
 try {
