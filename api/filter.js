@@ -116,10 +116,7 @@ if (normalizedCollection && normalizedCollection !== "all") {
     `["${normalizedCollection}"]`
   );
 }
-console.log({
-  collection: normalizedCollection,
-  fetchedProducts: allProducts.length
-});
+
 if (vendor) {
   query = query.in("vendor", toList(vendor));
 }
@@ -160,7 +157,10 @@ switch (sort_by) {
     query = query.order("created_at", { ascending: false });
 }
 const { data: allProducts, error } = await query;
-
+console.log({
+  collection: normalizedCollection,
+  fetchedProducts: allProducts.length
+});
 if (error) {
   console.error("Supabase Error:", error);
   return res.status(500).json({ error: error.message });
@@ -206,24 +206,19 @@ if (error) {
 console.log("Final products fetched:", allProducts.length);
 
     if (!allProducts?.length) {
-      console.log({
-  total,
-  totalPages,
-  currentPage
-});
-console.log("Colors from products:", colors);
-console.log("Colors from cache:", cachedFilters?.colors);
-      return res.status(200).json({
-        
-        filters: {},
-        products: [],
-        pagination: {
-          total: 0,
-          totalPages: 0,
-          currentPage: 1
-        }
-      });
+  console.log("No products found");
+  console.log("Cached colors:", cachedFilters?.colors);
+
+  return res.status(200).json({
+    filters: {},
+    products: [],
+    pagination: {
+      total: 0,
+      totalPages: 0,
+      currentPage: 1
     }
+  });
+}
 
     /* ================= APPLY FILTERS ================= */
 
@@ -261,8 +256,10 @@ console.log("Colors from cache:", cachedFilters?.colors);
 
     return String(item).split(",");
   })
-  .map(normalize)
-  .filter(Boolean);
+  .map(item => item.trim())
+  .filter(Boolean)
+  .forEach(color => colorSet.add(color));
+
 
     return selectedColors.some(selected =>
       productColors.includes(selected)
@@ -361,11 +358,6 @@ console.log("Filtered products:", formattedProducts.length);
     const deliverySet = new Set();
     const sizeAvailability = {};
 
-    console.log({
-  colors: [...colorSet],
-  vendors: [...vendorSet],
-  productTypes: [...typeSet]
-});
 
     filterSource.forEach((product) => {
       if (product.vendor) {
@@ -381,7 +373,11 @@ console.log("Filtered products:", formattedProducts.length);
   .map(item => item.trim())
   .filter(Boolean)
   .forEach(color => colorSet.add(color));
-
+console.log({
+  colors: [...colorSet],
+  vendors: [...vendorSet],
+  productTypes: [...typeSet]
+});
       safeParse(product.fabric).forEach((item) => {
         if (item) fabricSet.add(String(item).trim());
       });
@@ -413,9 +409,20 @@ const productTypes =
   cachedFilters?.productTypes?.map(v => v.name ?? v) ??
   [...typeSet];
 
-const colors =
-  cachedFilters?.colors?.map(v => v.name ?? v) ??
-  [...colorSet];
+  const normalizeCached = arr =>
+  (arr || []).map(v =>
+    typeof v === "object"
+      ? v.name
+      : v
+  );
+  
+  const colors =
+    cachedFilters
+        ? normalizeCached(cachedFilters.colors)
+        : [...colorSet];
+
+
+  
 console.log({
   cachedColors: cachedFilters?.colors,
   generatedColors: [...colorSet]
@@ -428,9 +435,7 @@ const delivery =
   cachedFilters?.delivery_timeline ??
   [...deliverySet];
 
-const sizes =
-  cachedFilters?.sizes?.map(v => v.name ?? v) ??
-  Object.keys(sizeAvailability);
+const sizes = cachedFilters?.sizes ?? Object.keys(sizeAvailability);
 
     const productPrices = formattedProducts.map((product) => product.price);
 console.log(JSON.stringify(cachedFilters, null, 2));
@@ -471,13 +476,16 @@ if (cachedFilters) {
     delivery.length ? sortAlpha(delivery) : [],
 
   sizes:
-    sizes.length
-      ? sortAlpha(sizes).map(name => ({
-          name,
-          available: sizeAvailability[name]
-        }))
-      : [],
+  Array.isArray(sizes)
+    ? sizes.map(item => {
+        if (typeof item === "object") return item;
 
+        return {
+          name: item,
+          available: sizeAvailability[item]
+        };
+      })
+    : [],
   priceRange: {
     min: productPrices.length ? Math.min(...productPrices) : 0,
     max: productPrices.length ? Math.max(...productPrices) : 0
