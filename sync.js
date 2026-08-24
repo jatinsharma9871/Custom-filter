@@ -320,21 +320,32 @@ console.log("================================");
     const colors = new Set();
 const rawColor = node.metafield?.value;
 
+
+
 if (rawColor) {
   try {
-    JSON.parse(rawColor).forEach(c => colors.add(c.trim()));
+    const parsed = JSON.parse(rawColor);
+
+    if (Array.isArray(parsed)) {
+      parsed.forEach(color => {
+        if (color) {
+          colors.add(String(color).trim());
+        }
+      });
+    } else if (parsed) {
+      colors.add(String(parsed).trim());
+    }
+
   } catch {
-    colors.add(rawColor.trim());
+    colors.add(String(rawColor).trim());
   }
 }
+console.log({
+  product: node.title,
+  rawColor,
+  parsedColors: [...colors]
+});
 
-if (node.metafield?.value) {
-  node.metafield.value
-    .split(",")
-    .map(color => color.trim())
-    .filter(Boolean)
-    .forEach(color => colors.add(color));
-}
       const variants = node.variants.edges.map(({ node: variant }) => ({
   price: Number(variant.price),
   compare_at_price: Number(variant.compareAtPrice || 0),
@@ -564,33 +575,33 @@ variants
       if (product.price)
         c.prices.push(Number(product.price));
 
-      const addValues = (value, set) => {
+const addValues = (value, set) => {
+  if (!value) return;
 
-        if (!value) return;
+  let arr = [];
 
-        let arr = [];
+  try {
+    arr = Array.isArray(value)
+      ? value
+      : JSON.parse(value);
+  } catch {
+    arr = String(value).split(",");
+  }
 
-        try {
-          arr = Array.isArray(value)
-            ? value
-            : JSON.parse(value);
-        } catch {
-          arr = String(value).split(",");
-        }
-
-      
-          arr
-.flatMap(v => {
-    if (typeof v === "object" && v !== null) {
+  arr
+    .flatMap(v => {
+      if (typeof v === "object" && v !== null) {
         return Object.values(v);
-    }
+      }
 
-    return String(v).split(",");
-})
-.map(v => v.trim())
-.filter(Boolean)
-.forEach(v => set.add(v));
-      };
+      return String(v).split(",");
+    })
+    .map(v => v.trim())
+    .filter(Boolean)
+    .forEach(v => set.add(v));
+};
+
+
 
       addValues(product.color, c.colors);
       console.log(
@@ -629,6 +640,11 @@ variants.forEach((variant) => {
 
  console.log(`Collections Found: ${Object.keys(collections).length}`);
 
+
+console.log(
+  "jayati-goenka colors:",
+  [...collections["jayati-goenka"].colors]
+);
 
 
 const rows = Object.entries(collections).map(([handle, data]) => ({
