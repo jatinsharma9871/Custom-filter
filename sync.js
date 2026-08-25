@@ -18,21 +18,7 @@ async function getAccessToken() {
   }
 
   // Try cached token from Supabase
-  const { data } = await supabase
-    .from("shopify_config")
-    .select("access_token, expires_at")
-    .eq("id", 1)
-    .single();
-
-  if (
-    data?.access_token &&
-    data?.expires_at &&
-    new Date(data.expires_at).getTime() > Date.now() + 60000
-  ) {
-    TOKEN = data.access_token;
-    TOKEN_EXPIRES = new Date(data.expires_at).getTime();
-    return TOKEN;
-  }
+  
 
   console.log("Generating new Shopify token...");
 
@@ -63,7 +49,7 @@ async function getAccessToken() {
 TOKEN_EXPIRES = Date.now() + tokenData.expires_in * 1000;
 
 await supabase
-  .from("shopify_config")
+ .from("shopify_token")
   .upsert({
     id: 1,
     access_token: TOKEN,
@@ -204,9 +190,6 @@ query GetProducts($cursor: String) {
         title
         handle
         vendor
-        metafield(namespace: "custom", key: "color1") {
-  value
-}
         productType
         tags
         metafield(namespace: "custom", key: "color1") {
@@ -307,7 +290,12 @@ const productConnection = data.data.products;
      console.log("\n================================");
 console.log("Product:", node.title);
 console.log("Tags:", node.tags);
-
+if (node.handle === "white-black-mesh-co-ord") {
+  node.variants.edges.forEach(({ node: variant }, index) => {
+    console.log(`Variant ${index + 1}:`);
+    console.log(JSON.stringify(variant.selectedOptions, null, 2));
+  });
+}
 console.log(
   "Variant Options:",
   JSON.stringify(
@@ -320,6 +308,14 @@ console.log("================================");
     const colors = new Set();
 const rawColor = node.metafield?.value;
 
+if (node.handle === "blue-mori-suit-set") {
+  console.log({
+    handle: node.handle,
+    metafield: node.metafield,
+    rawColor,
+    variantOptions: node.variants.edges.map(v => v.node.selectedOptions)
+  });
+}
 
 
 if (rawColor) {
