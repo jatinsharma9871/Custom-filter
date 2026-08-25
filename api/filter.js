@@ -72,16 +72,16 @@ export default async function handler(req, res) {
   /* ================= FETCH PRODUCTS ================= */
 
 let cachedFilters = null;
-console.log("Collection:", normalizedCollection);
-if (normalizedCollection && normalizedCollection !== "all") {
-  const { data } = await supabase
-    .from("filter_cache")
-    .select("filters")
-    .eq("collection_handle", normalizedCollection)
-    .maybeSingle();
+// console.log("Collection:", normalizedCollection);
+// if (normalizedCollection && normalizedCollection !== "all") {
+//   const { data } = await supabase
+//     .from("filter_cache")
+//     .select("filters")
+//     .eq("collection_handle", normalizedCollection)
+//     .maybeSingle();
 
-  cachedFilters = data?.filters || null;
-}
+//   cachedFilters = data?.filters || null;
+// }
 console.log("Collection:", normalizedCollection);
 console.log(
   "Cached colors:",
@@ -409,11 +409,11 @@ console.log(
   [...colorSet].sort()
 );
    const vendors =
-  cachedFilters?.vendors?.map(v => v.name ?? v) ??
+  // cachedFilters?.vendors?.map(v => v.name ?? v) ??
   [...vendorSet];
 
 const productTypes =
-  cachedFilters?.productTypes?.map(v => v.name ?? v) ??
+  // cachedFilters?.productTypes?.map(v => v.name ?? v) ??
   [...typeSet];
 
   const normalizeCached = arr =>
@@ -426,9 +426,11 @@ const productTypes =
   console.log("Cached colors:", cachedFilters?.colors);
 console.log("Generated colors:", [...colorSet]);
 
-  const colors = cachedFilters
-  ? normalizeCached(cachedFilters.colors).filter(Boolean)
-  : [...colorSet].filter(Boolean);
+  const colors = 
+  // cachedFilters
+  // ? normalizeCached(cachedFilters.colors).filter(Boolean)
+  // :
+   [...colorSet].filter(Boolean);
 
   
 console.log({
@@ -436,14 +438,16 @@ console.log({
   generatedColors: [...colorSet]
 });
 const fabrics =
-  cachedFilters?.fabrics ??
+  // cachedFilters?.fabrics ??
   [...fabricSet];
 
 const delivery =
-  cachedFilters?.delivery_timeline ??
+  // cachedFilters?.delivery_timeline ??
   [...deliverySet];
 
-const sizes = cachedFilters?.sizes ?? Object.keys(sizeAvailability);
+const sizes =
+//  cachedFilters?.sizes ?? 
+Object.keys(sizeAvailability);
 
     const productPrices = formattedProducts.map((product) => product.price);
 console.log(JSON.stringify(cachedFilters, null, 2));
@@ -454,13 +458,13 @@ console.log({
 });
 console.log("Cached filters exists:", !!cachedFilters);
 
-if (cachedFilters) {
-  console.log("Cached colors:", cachedFilters.colors?.length);
-  console.log("Cached sizes:", cachedFilters.sizes?.length);
-  console.log("Cached vendors:", cachedFilters.vendors?.length);
-  console.log("Cached productTypes:", cachedFilters.productTypes?.length);
-  console.log("Cached fabrics:", cachedFilters.fabrics?.length);
-}
+// if (cachedFilters) {
+//   console.log("Cached colors:", cachedFilters.colors?.length);
+//   console.log("Cached sizes:", cachedFilters.sizes?.length);
+//   console.log("Cached vendors:", cachedFilters.vendors?.length);
+//   console.log("Cached productTypes:", cachedFilters.productTypes?.length);
+//   console.log("Cached fabrics:", cachedFilters.fabrics?.length);
+// }
     return res.status(200).json({
      filters: {
   vendors:
