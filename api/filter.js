@@ -159,17 +159,19 @@ switch (sort_by) {
     query = query.order("created_at", { ascending: false });
 }
 const { data: allProducts, error } = await query;
-console.log({
-  collection: normalizedCollection,
-  fetchedProducts: allProducts.length || 0
-});
+console.log("Query Error:", error);
+console.log("Products:", allProducts);
 if (error) {
   console.error("Supabase Error:", error);
   return res.status(500).json({ error: error.message });
 }
 
-console.log("Supabase products:", allProducts?.length || 0);
+console.log({
+  collection: normalizedCollection,
+  fetchedProducts: allProducts?.length || 0
+});
 
+console.log("Supabase products:", allProducts?.length || 0);
 
 //    let allProducts = [];
 // let from = 0;
