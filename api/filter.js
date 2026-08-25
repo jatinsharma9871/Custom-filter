@@ -82,6 +82,11 @@ if (normalizedCollection && normalizedCollection !== "all") {
 
   cachedFilters = data?.filters || null;
 }
+console.log("Collection:", normalizedCollection);
+console.log(
+  "Cached colors:",
+  cachedFilters?.colors?.map(c => c.name ?? c)
+);
 
 const PRODUCT_COLUMNS = `
 id,
@@ -399,7 +404,10 @@ console.log({
         }
       });
     });
-
+console.log(
+  "Generated colors:",
+  [...colorSet].sort()
+);
    const vendors =
   cachedFilters?.vendors?.map(v => v.name ?? v) ??
   [...vendorSet];
@@ -415,6 +423,9 @@ const productTypes =
       : v
   );
   
+  console.log("Cached colors:", cachedFilters?.colors);
+console.log("Generated colors:", [...colorSet]);
+
   const colors = cachedFilters
   ? normalizeCached(cachedFilters.colors).filter(Boolean)
   : [...colorSet].filter(Boolean);
