@@ -600,13 +600,7 @@ const addValues = (value, set) => {
 
 
       addValues(product.color, c.colors);
-      if (handle === "jayati-goenka") {
-  console.log(
-    product.title,
-    product.color,
-    [...c.colors]
-  );
-}
+     
       console.log(
   "Product:",
   product.title,
@@ -642,12 +636,6 @@ variants.forEach((variant) => {
   }
 
  console.log(`Collections Found: ${Object.keys(collections).length}`);
-
-
-console.log(
-  "jayati-goenka colors:",
-  [...collections["jayati-goenka"].colors]
-);
 
 
 const rows = Object.entries(collections).map(([handle, data]) => ({
