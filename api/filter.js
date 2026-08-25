@@ -107,6 +107,19 @@ created_at,
 collection_handle,
 position
 `;
+console.log("Total products loaded:", products.length);
+
+const jayatiProducts = products.filter(p => {
+  const handles = Array.isArray(p.collection_handle)
+    ? p.collection_handle
+    : [];
+  return handles.includes("jayati-goenka");
+});
+
+console.log(
+  "Jayati products loaded:",
+  jayatiProducts.length
+);
 
 let query = supabase
   .from("products")
