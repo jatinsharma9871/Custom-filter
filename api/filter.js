@@ -82,11 +82,7 @@ let cachedFilters = null;
 
 //   cachedFilters = data?.filters || null;
 // }
-console.log("Collection:", normalizedCollection);
-console.log(
-  "Cached colors:",
-  cachedFilters?.colors?.map(c => c.name ?? c)
-);
+
 
 const PRODUCT_COLUMNS = `
 id,
@@ -107,19 +103,7 @@ created_at,
 collection_handle,
 position
 `;
-console.log("Total products loaded:", products.length);
 
-const jayatiProducts = products.filter(p => {
-  const handles = Array.isArray(p.collection_handle)
-    ? p.collection_handle
-    : [];
-  return handles.includes("jayati-goenka");
-});
-
-console.log(
-  "Jayati products loaded:",
-  jayatiProducts.length
-);
 
 let query = supabase
   .from("products")
@@ -237,26 +221,6 @@ console.log("Final products fetched:", allProducts.length);
 
     let products = [...allProducts];
     console.log("Selected color:", color);
-// const { data, error } = await query;
-    // Designer
-    // if (vendor) {
-    //   const selectedVendors = toList(vendor).map(normalize);
-
-    //   products = products.filter((product) =>
-    //     selectedVendors.includes(normalize(product.vendor))
-    //   );
-    // }
-
-    // Product type
-    // if (product_type) {
-    //   const selectedTypes = toList(product_type).map(normalize);
-
-    //   products = products.filter((product) =>
-    //     selectedTypes.includes(normalize(product.product_type))
-    //   );
-    // }
-
-    // Fabric
     if (color) {
   const selectedColors = toList(color).map(normalize);
 
@@ -421,13 +385,9 @@ console.log(
   "Generated colors:",
   [...colorSet].sort()
 );
-   const vendors =
-  // cachedFilters?.vendors?.map(v => v.name ?? v) ??
-  [...vendorSet];
+   const vendors = [...vendorSet];
 
-const productTypes =
-  // cachedFilters?.productTypes?.map(v => v.name ?? v) ??
-  [...typeSet];
+const productTypes = [...typeSet];
 
   const normalizeCached = arr =>
   (arr || []).map(v =>
@@ -439,28 +399,18 @@ const productTypes =
   console.log("Cached colors:", cachedFilters?.colors);
 console.log("Generated colors:", [...colorSet]);
 
-  const colors = 
-  // cachedFilters
-  // ? normalizeCached(cachedFilters.colors).filter(Boolean)
-  // :
-   [...colorSet].filter(Boolean);
+  const colors = [...colorSet].filter(Boolean);
 
   
 console.log({
   cachedColors: cachedFilters?.colors,
   generatedColors: [...colorSet]
 });
-const fabrics =
-  // cachedFilters?.fabrics ??
-  [...fabricSet];
+const fabrics = [...fabricSet];
 
-const delivery =
-  // cachedFilters?.delivery_timeline ??
-  [...deliverySet];
+const delivery = [...deliverySet];
 
-const sizes =
-//  cachedFilters?.sizes ?? 
-Object.keys(sizeAvailability);
+const sizes = Object.keys(sizeAvailability);
 
     const productPrices = formattedProducts.map((product) => product.price);
 console.log(JSON.stringify(cachedFilters, null, 2));
