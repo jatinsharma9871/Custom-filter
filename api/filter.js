@@ -5,6 +5,8 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+const PAGE_LIMIT = 12;
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
@@ -32,7 +34,7 @@ export default async function handler(req, res) {
     const normalizedCollection = String(collection || "")
       .trim()
       .toLowerCase()
-      .replace(/[^a-z0-9-_]/g, "");
+      .replace(/[^a-z0-9-_]/g, "") || "all";
 
     const safeParse = (value) => {
       try {
@@ -58,33 +60,35 @@ export default async function handler(req, res) {
         .map((item) => String(item).trim())
         .filter(Boolean);
 
-    const sortAlpha = (values) =>
-      values.sort((a, b) =>
-        a.localeCompare(b, undefined, { sensitivity: "base" })
-      );
+    // Escapes a value for safe use inside a PostgREST .or() filter string.
+    // Commas and parentheses are meaningful in that syntax, so they're
+    // stripped rather than matched literally.
+    const escapeForOr = (value) =>
+      String(value).replace(/[(),]/g, "");
 
     const variantIsAvailable = (variant) =>
       variant &&
       (Number(variant.inventory_quantity) > 0 || variant.available === true);
 
-    /* ================= FETCH PRODUCTS ================= */
+    const currentPage = Math.max(1, Number(page) || 1);
 
-  /* ================= FETCH PRODUCTS ================= */
+    /* ================= FILTER OPTIONS (from cache) ================= */
 
-let cachedFilters = null;
-// console.log("Collection:", normalizedCollection);
-// if (normalizedCollection && normalizedCollection !== "all") {
-//   const { data } = await supabase
-//     .from("filter_cache")
-//     .select("filters")
-//     .eq("collection_handle", normalizedCollection)
-//     .maybeSingle();
+    const { data: cacheRow, error: cacheError } = await supabase
+      .from("filter_cache")
+      .select("filters")
+      .eq("collection_handle", normalizedCollection)
+      .maybeSingle();
 
-//   cachedFilters = data?.filters || null;
-// }
+    if (cacheError) {
+      console.error("Filter cache lookup error:", cacheError);
+    }
 
+    const cachedFilters = cacheRow?.filters || null;
 
-const PRODUCT_COLUMNS = `
+    /* ================= BUILD PRODUCT QUERY ================= */
+
+    const PRODUCT_COLUMNS = `
 id,
 title,
 handle,
@@ -104,373 +108,187 @@ collection_handle,
 position
 `;
 
+    let query = supabase
+      .from("products")
+      .select(PRODUCT_COLUMNS, { count: "exact" })
+      .eq("status", "ACTIVE")
+      .eq("published", true);
 
-let query = supabase
-  .from("products")
-  .select(PRODUCT_COLUMNS)
-  .eq("status", "ACTIVE")
-  .eq("published", true);
-
-if (normalizedCollection && normalizedCollection !== "all") {
-  query = query.filter(
-    "collection_handle",
-    "cs",
-    `["${normalizedCollection}"]`
-  );
-}
-
-if (vendor) {
-  query = query.in("vendor", toList(vendor));
-}
-
-if (product_type) {
-  query = query.in("product_type", toList(product_type));
-}
-
-if (minPrice) {
-  query = query.gte("price", Number(minPrice));
-}
-
-if (maxPrice) {
-  query = query.lte("price", Number(maxPrice));
-}
-switch (sort_by) {
-  case "price-ascending":
-    query = query.order("price", { ascending: true });
-    break;
-
-  case "price-descending":
-    query = query.order("price", { ascending: false });
-    break;
-
-  case "title-ascending":
-    query = query.order("title", { ascending: true });
-    break;
-
-  case "title-descending":
-    query = query.order("title", { ascending: false });
-    break;
-
-  case "created-ascending":
-    query = query.order("created_at", { ascending: true });
-    break;
-
-  default:
-    query = query.order("created_at", { ascending: false });
-}
-const { data: allProducts, error } = await query;
-console.log("Query Error:", error);
-console.log("Products:", allProducts);
-if (error) {
-  console.error("Supabase Error:", error);
-  return res.status(500).json({ error: error.message });
-}
-
-console.log({
-  collection: normalizedCollection,
-  fetchedProducts: allProducts?.length || 0
-});
-
-console.log("Supabase products:", allProducts?.length || 0);
-
-//    let allProducts = [];
-// let from = 0;
-// const batchSize = 1000;
-
-// while (true) {
-  
-//   const { data, error } = await query.range(from, from + batchSize - 1);
-
-//   if (error) {
-//     return res.status(500).json({ error: error.message });
-//   }
-
-//   if (!data || data.length === 0) {
-//     break;
-//   }
-
-//   allProducts.push(...data);
-
-//   console.log(
-//     `Fetched ${data.length} products (Total: ${allProducts.length})`
-//   );
-
-//   if (data.length < batchSize) {
-//     break;
-//   }
-
-//   from += batchSize;
-// }
-
-console.log("Final products fetched:", allProducts.length);
-
-    if (!allProducts?.length) {
-  console.log("No products found");
-  console.log("Cached colors:", cachedFilters?.colors);
-
-  return res.status(200).json({
-    filters: {},
-    products: [],
-    pagination: {
-      total: 0,
-      totalPages: 0,
-      currentPage: 1
+    if (normalizedCollection && normalizedCollection !== "all") {
+      query = query.filter(
+        "collection_handle",
+        "cs",
+        `["${normalizedCollection}"]`
+      );
     }
-  });
-}
 
-    /* ================= APPLY FILTERS ================= */
+    if (vendor) {
+      query = query.in("vendor", toList(vendor));
+    }
 
-    let products = [...allProducts];
-    console.log("Selected color:", color);
+    if (product_type) {
+      query = query.in("product_type", toList(product_type));
+    }
+
+    if (minPrice) {
+      query = query.gte("price", Number(minPrice));
+    }
+
+    if (maxPrice) {
+      query = query.lte("price", Number(maxPrice));
+    }
+
+    // color/fabric/delivery_timeline are stored as JSON-encoded text
+    // (e.g. `["Black","Blue"]`), so containment is checked with a
+    // quoted-substring ILIKE match pushed down to Postgres instead of
+    // pulling every row into Node to filter in memory.
+    // Note: inside a PostgREST .or() filter string, "*" is the wildcard
+    // (not "%") — it's an alias PostgREST provides specifically so
+    // pattern characters don't collide with the filter string's own
+    // reserved characters (commas, periods, etc).
     if (color) {
-  const selectedColors = toList(color).map(normalize);
-
-  products = products.filter((product) => {
-    const productColors = safeParse(product.color)
-  .flatMap(item => {
-    if (typeof item === "object" && item !== null) {
-      return Object.values(item);
+      const selectedColors = toList(color);
+      const orExpr = selectedColors
+        .map((c) => `color.ilike.*"${escapeForOr(c)}"*`)
+        .join(",");
+      if (orExpr) query = query.or(orExpr);
     }
-    return String(item).split(",");
-  })
-  .map(normalize)
-  .filter(Boolean);
 
-return selectedColors.some(selected =>
-  productColors.includes(selected)
-);
-  });
-
-  console.log("After color:", products.length);
-}
     if (fabric) {
-      const selectedFabrics = toList(fabric).map(normalize);
-
-      products = products.filter((product) => {
-        const productFabrics = safeParse(product.fabric).map(normalize);
-
-        return selectedFabrics.some((selectedFabric) =>
-          productFabrics.includes(selectedFabric)
-        );
-      });
+      const selectedFabrics = toList(fabric);
+      const orExpr = selectedFabrics
+        .map((f) => `fabric.ilike.*${escapeForOr(f)}*`)
+        .join(",");
+      if (orExpr) query = query.or(orExpr);
     }
 
-  
+    if (delivery_timeline) {
+      const selectedDeliveryTimes = toList(delivery_timeline);
+      const orExpr = selectedDeliveryTimes
+        .map((d) => `delivery_timeline.ilike.*${escapeForOr(d)}*`)
+        .join(",");
+      if (orExpr) query = query.or(orExpr);
+    }
+
+    switch (sort_by) {
+      case "price-ascending":
+        query = query.order("price", { ascending: true });
+        break;
+
+      case "price-descending":
+        query = query.order("price", { ascending: false });
+        break;
+
+      case "title-ascending":
+        query = query.order("title", { ascending: true });
+        break;
+
+      case "title-descending":
+        query = query.order("title", { ascending: false });
+        break;
+
+      case "created-ascending":
+        query = query.order("created_at", { ascending: true });
+        break;
+
+      default:
+        query = query.order("created_at", { ascending: false });
+    }
+
+    /* ================= FETCH ================= */
+
+    let allProducts, total;
+
     if (size) {
+      // Size availability lives inside the `variants` JSON blob and can't
+      // be filtered in SQL here, so pull the (already narrowed-by-other-
+      // filters) matching rows and finish filtering + paginate in memory.
+      const { data, error, count } = await query;
+
+      if (error) {
+        console.error("Supabase Error:", error);
+        return res.status(500).json({ error: error.message });
+      }
+
       const selectedSizes = toList(size).map(normalize);
 
-      products = products.filter((product) =>
+      allProducts = (data || []).filter((product) =>
         safeParse(product.variants).some(
           (variant) =>
             selectedSizes.includes(normalize(variant?.size)) &&
             variantIsAvailable(variant)
         )
       );
-    }
 
-    // Delivery timeline
-    if (delivery_timeline) {
-      const selectedDeliveryTimes = toList(delivery_timeline).map(normalize);
+      total = allProducts.length;
+      allProducts = allProducts.slice(
+        (currentPage - 1) * PAGE_LIMIT,
+        currentPage * PAGE_LIMIT
+      );
+    } else {
+      // No size filter: page directly in Postgres.
+      const from = (currentPage - 1) * PAGE_LIMIT;
+      const to = from + PAGE_LIMIT - 1;
 
-      products = products.filter((product) => {
-        const productDeliveryTimes = safeParse(
-          product.delivery_timeline
-        ).map(normalize);
+      const { data, error, count } = await query.range(from, to);
 
-        return selectedDeliveryTimes.some((selectedTime) =>
-          productDeliveryTimes.includes(selectedTime)
-        );
-      });
-    }
-
-    // Build filter options after selected filters, before inventory filtering.
-    const filterSource = [...allProducts];
-
-    /* ================= INVENTORY FILTER ================= */
-
-    products = products.filter((product) => {
-      if (Number(product.inventory_quantity) > 0) return true;
-
-      return safeParse(product.variants).some(variantIsAvailable);
-    });
-
-    /* ================= FORMAT PRODUCTS ================= */
-
-    let formattedProducts = products.map((product) => ({
-      ...product,
-      price: Number(product.price || 0),
-      compare_at_price: Number(
-        product.compare_at_price ||
-          product.compareAtPrice ||
-          product.mrp ||
-          0
-      )
-    }));
-console.log("Filtered products:", formattedProducts.length);
-    /* ================= SORT ================= */
-
-
-    
-
-    /* ================= PAGINATION ================= */
-
-    const currentPage = Math.max(1, Number(page) || 1);
-    const limit = 12;
-    const total = formattedProducts.length;
-    const totalPages = Math.max(1, Math.ceil(total / limit));
-
-    const paginatedProducts = formattedProducts.slice(
-      (currentPage - 1) * limit,
-      currentPage * limit
-    );
-
-    /* ================= BUILD FILTER OPTIONS ================= */
-
-    const vendorSet = new Set();
-    const typeSet = new Set();
-    const colorSet = new Set();
-    const fabricSet = new Set();
-    const deliverySet = new Set();
-    const sizeAvailability = {};
-
-
-    filterSource.forEach((product) => {
-      if (product.vendor) {
-        vendorSet.add(String(product.vendor).trim());
+      if (error) {
+        console.error("Supabase Error:", error);
+        return res.status(500).json({ error: error.message });
       }
 
-      if (product.product_type) {
-        typeSet.add(String(product.product_type).trim());
-      }
-
-      safeParse(product.color)
-  .flatMap(item => {
-    if (typeof item === "object" && item !== null) {
-      return Object.values(item);
+      allProducts = data || [];
+      total = count ?? allProducts.length;
     }
-    return String(item).split(",");
-  })
-  .map(item => item.trim())
-  .filter(Boolean)
-  .forEach(color => colorSet.add(color));
 
+    /* ================= INVENTORY FILTER (in-page only) ================= */
 
-console.log({
-  colors: [...colorSet],
-  vendors: [...vendorSet],
-  productTypes: [...typeSet]
-});
-      safeParse(product.fabric).forEach((item) => {
-        if (item) fabricSet.add(String(item).trim());
-      });
+    const paginatedProducts = allProducts
+      .filter((product) => {
+        if (Number(product.inventory_quantity) > 0) return true;
+        return safeParse(product.variants).some(variantIsAvailable);
+      })
+      .map((product) => ({
+        ...product,
+        price: Number(product.price || 0),
+        compare_at_price: Number(
+          product.compare_at_price ||
+            product.compareAtPrice ||
+            product.mrp ||
+            0
+        )
+      }));
 
-      safeParse(product.delivery_timeline).forEach((item) => {
-        if (item) deliverySet.add(String(item).trim());
-      });
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_LIMIT));
 
-      safeParse(product.variants).forEach((variant) => {
-        const variantSize = String(variant?.size || "").trim();
+    /* ================= FILTERS RESPONSE ================= */
 
-        if (!variantSize) return;
+    const normalizeCachedNames = (arr) =>
+      (arr || []).map((v) => (typeof v === "object" ? v : { name: v }));
 
-        if (!(variantSize in sizeAvailability)) {
-          sizeAvailability[variantSize] = false;
+    const filters = cachedFilters
+      ? {
+          vendors: normalizeCachedNames(cachedFilters.vendors),
+          productTypes: normalizeCachedNames(cachedFilters.productTypes),
+          colors: normalizeCachedNames(cachedFilters.colors),
+          fabrics: cachedFilters.fabrics || [],
+          delivery_timeline: cachedFilters.delivery_timeline || [],
+          sizes: cachedFilters.sizes || [],
+          priceRange: cachedFilters.priceRange || { min: 0, max: 0 }
         }
+      : {
+          vendors: [],
+          productTypes: [],
+          colors: [],
+          fabrics: [],
+          delivery_timeline: [],
+          sizes: [],
+          priceRange: { min: 0, max: 0 }
+        };
 
-        if (variantIsAvailable(variant)) {
-          sizeAvailability[variantSize] = true;
-        }
-      });
-    });
-console.log(
-  "Generated colors:",
-  [...colorSet].sort()
-);
-   const vendors = [...vendorSet];
-
-const productTypes = [...typeSet];
-
-  const normalizeCached = arr =>
-  (arr || []).map(v =>
-    typeof v === "object"
-      ? v.name
-      : v
-  );
-  
-  console.log("Cached colors:", cachedFilters?.colors);
-console.log("Generated colors:", [...colorSet]);
-
-  const colors = [...colorSet].filter(Boolean);
-
-  
-console.log({
-  cachedColors: cachedFilters?.colors,
-  generatedColors: [...colorSet]
-});
-const fabrics = [...fabricSet];
-
-const delivery = [...deliverySet];
-
-const sizes = Object.keys(sizeAvailability);
-
-    const productPrices = formattedProducts.map((product) => product.price);
-console.log(JSON.stringify(cachedFilters, null, 2));
-console.log({
-  total,
-  totalPages,
-  currentPage
-});
-console.log("Cached filters exists:", !!cachedFilters);
-
-// if (cachedFilters) {
-//   console.log("Cached colors:", cachedFilters.colors?.length);
-//   console.log("Cached sizes:", cachedFilters.sizes?.length);
-//   console.log("Cached vendors:", cachedFilters.vendors?.length);
-//   console.log("Cached productTypes:", cachedFilters.productTypes?.length);
-//   console.log("Cached fabrics:", cachedFilters.fabrics?.length);
-// }
     return res.status(200).json({
-     filters: {
-  vendors:
-    vendors.length
-      ? sortAlpha(vendors).map(name => ({ name }))
-      : [],
-
-  productTypes:
-    productTypes.length
-      ? sortAlpha(productTypes).map(name => ({ name }))
-      : [],
-
- colors:
-  colors.length
-    ? sortAlpha(colors).map(name => ({ name }))
-    : [],
-
-  fabrics: fabrics.length ? sortAlpha(fabrics) : [],
-
-  delivery_timeline:
-    delivery.length ? sortAlpha(delivery) : [],
-
-sizes: Array.isArray(sizes)
-  ? sizes
-      .map(item =>
-        typeof item === "object"
-          ? item
-          : {
-              name: item,
-              available: sizeAvailability[item]
-            }
-      )
-      .sort((a, b) => a.name.localeCompare(b.name))
-  : [],
-  priceRange: {
-    min: productPrices.length ? Math.min(...productPrices) : 0,
-    max: productPrices.length ? Math.max(...productPrices) : 0
-  }
-},
+      filters,
       products: paginatedProducts,
-
       pagination: {
         total,
         totalPages,

@@ -17,9 +17,6 @@ async function getAccessToken() {
     return TOKEN;
   }
 
-  // Try cached token from Supabase
-  
-
   console.log("Generating new Shopify token...");
 
   const response = await fetch(
@@ -46,18 +43,18 @@ async function getAccessToken() {
   const tokenData = await response.json();
 
   TOKEN = tokenData.access_token;
-TOKEN_EXPIRES = Date.now() + tokenData.expires_in * 1000;
+  TOKEN_EXPIRES = Date.now() + tokenData.expires_in * 1000;
 
-await supabase
- .from("shopify_token")
-  .upsert({
-    id: 1,
-    access_token: TOKEN,
-    expires_at: new Date(TOKEN_EXPIRES).toISOString(),
-    updated_at: new Date().toISOString()
-  });
+  await supabase
+    .from("shopify_token")
+    .upsert({
+      id: 1,
+      access_token: TOKEN,
+      expires_at: new Date(TOKEN_EXPIRES).toISOString(),
+      updated_at: new Date().toISOString()
+    });
 
-return TOKEN;
+  return TOKEN;
 }
 
 const API_VERSION =
@@ -65,7 +62,7 @@ const API_VERSION =
   "2026-07";
 
 const supabase = createClient(
-process.env.SUPABASE_URL || "https://rflabvnooobawvhxkuoi.supabase.co",
+  process.env.SUPABASE_URL || "https://rflabvnooobawvhxkuoi.supabase.co",
   process.env.SUPABASE_SERVICE_ROLE_KEY || "sb_publishable_7QPCLDGw0t6YloSbtA6Y0w_weJ86qO5"
 );
 
@@ -113,17 +110,15 @@ function getPrice(variants) {
 }
 
 async function shopifyRequest(query, variables = {}) {
- const token = await getAccessToken();
+  const token = await getAccessToken();
   const response = await fetch(
     `https://${SHOP}/admin/api/${API_VERSION}/graphql.json`,
     {
       method: "POST",
-    
-
-headers: {
-  "X-Shopify-Access-Token": token,
-  "Content-Type": "application/json",
-},
+      headers: {
+        "X-Shopify-Access-Token": token,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({
         query,
         variables,
@@ -133,24 +128,24 @@ headers: {
 
   // Handle Shopify rate limiting
   if (response.status === 401) {
-  throw new Error(
-    "Shopify access token is invalid or expired."
-  );
-}
- if (response.status === 429) {
-  const retryAfter =
-    Number(response.headers.get("Retry-After")) || 2;
+    throw new Error(
+      "Shopify access token is invalid or expired."
+    );
+  }
+  if (response.status === 429) {
+    const retryAfter =
+      Number(response.headers.get("Retry-After")) || 2;
 
-  console.log(
-    `⚠️ Rate limited. Waiting ${retryAfter} seconds...`
-  );
+    console.log(
+      `⚠️ Rate limited. Waiting ${retryAfter} seconds...`
+    );
 
-  await new Promise(resolve =>
-    setTimeout(resolve, retryAfter * 1000)
-  );
+    await new Promise(resolve =>
+      setTimeout(resolve, retryAfter * 1000)
+    );
 
-  return shopifyRequest(query, variables);
-}
+    return shopifyRequest(query, variables);
+  }
   const text = await response.text();
 
   let json;
@@ -166,11 +161,11 @@ headers: {
   }
 
   if (json.errors?.length) {
-  console.error(json.errors);
-  throw new Error("Shopify GraphQL Error");
-}
+    console.error(json.errors);
+    throw new Error("Shopify GraphQL Error");
+  }
 
-return json;
+  return json;
 }
 /* =========================================================
    GRAPHQL QUERY
@@ -250,204 +245,199 @@ async function syncProducts() {
 
     while (hasNextPage) {
 
-    console.log(
-      `Fetching Batch ${batch}...`
-    );
-
-    const data = await shopifyRequest(
-  PRODUCT_QUERY,
-  {
-    cursor,
-  }
-);
-
-if (data.extensions?.cost) {
-  console.log(
-    `API Cost: ${data.extensions.cost.requestedQueryCost} | Available: ${data.extensions.cost.throttleStatus.currentlyAvailable}`
-  );
-}
-
-const productConnection = data.data.products;
-
-
-    const edges =
-      productConnection.edges;
-
-    hasNextPage =
-      productConnection.pageInfo.hasNextPage;
-
-    cursor =
-      productConnection.pageInfo.endCursor;
-
-   
-     console.log(
-  `Batch ${batch}: Received ${edges.length} products`
-);
-      const products = edges.map(({ node }) => {
-        
-
-      const tags = node.tags || [];
-
-    const colors = new Set();
-const rawColor = node.metafield?.value;
-
-if (rawColor) {
-  try {
-    const parsed = JSON.parse(rawColor);
-
-    if (Array.isArray(parsed)) {
-      parsed.forEach(color => {
-        if (color) {
-          colors.add(String(color).trim());
-        }
-      });
-    } else if (parsed) {
-      colors.add(String(parsed).trim());
-    }
-
-  } catch {
-    colors.add(String(rawColor).trim());
-  }
-}
-
-      const variants = node.variants.edges.map(({ node: variant }) => ({
-  price: Number(variant.price),
-  compare_at_price: Number(variant.compareAtPrice || 0),
-  inventory_quantity: Number(variant.inventoryQuantity || 0),
- available: Boolean(variant.availableForSale),
-
-  options: variant.selectedOptions,
-
-  color:
-    variant.selectedOptions.find(
-      o => o.name.toLowerCase() === "color"
-    )?.value || null,
-
-  size:
-    variant.selectedOptions.find(
-      o => o.name.toLowerCase() === "size"
-    )?.value || null
-}));
-
-      const collectionHandles =
-  node.collections?.edges?.map(c => c.node.handle) || [];
-if (!collectionHandles.length) {
-    console.warn(
-        "No collections:",
-        node.title,
-        node.handle
-    );
-}
-      return {
-        id: node.id,
-
-        title: node.title,
-
-        handle: node.handle,
-
-        vendor: node.vendor,
-
-        product_type: node.productType,
-
-        collection: node.productType,
-        
-
-        collection_handle: collectionHandles,
-
-        price: getPrice(node.variants),
-variants: JSON.stringify(variants),
-
-inventory_quantity: variants.reduce(
-  (sum, v) => sum + v.inventory_quantity,
-  0
-),
-
-published: true,
-
-status: "ACTIVE",
-
-
-
-        compare_at_price:
-          Number.parseFloat(
-            node.variants?.edges?.[0]?.node?.compareAtPrice || 0
-          ),
-
-        image: getFirstImage(node.images),
-
-       images: JSON.stringify(getAllImages(node.images)),
-
-       color: JSON.stringify([...colors]),
-
-        size: extractTag(tags, "Size"),
-
-        fabric: extractTag(tags, "Fabric"),
-
-        delivery_timeline: extractTag(tags, "Delivery"),
-        
-      };
-
-    });
-
-    console.log(
-      `Prepared ${products.length} products`
-    );    let retries = 3;
-
-    while (retries > 0) {
-
-      const { error } = await supabase
-        .from("products")
-        .upsert(
-          products,
-          {
-            onConflict: "id",
-            ignoreDuplicates: false,
-          }
-        );
-
-      if (!error) {
-        break;
-      }
-
-      retries--;
-
-      console.error(
-        `Supabase Upsert Failed (${3 - retries}/3)`
+      console.log(
+        `Fetching Batch ${batch}...`
       );
 
-      console.error(error);
+      const data = await shopifyRequest(
+        PRODUCT_QUERY,
+        {
+          cursor,
+        }
+      );
 
-      if (retries === 0) {
-        throw error;
+      if (data.extensions?.cost) {
+        console.log(
+          `API Cost: ${data.extensions.cost.requestedQueryCost} | Available: ${data.extensions.cost.throttleStatus.currentlyAvailable}`
+        );
       }
+
+      const productConnection = data.data.products;
+
+      const edges =
+        productConnection.edges;
+
+      hasNextPage =
+        productConnection.pageInfo.hasNextPage;
+
+      cursor =
+        productConnection.pageInfo.endCursor;
 
       console.log(
-        "Retrying in 2 seconds..."
+        `Batch ${batch}: Received ${edges.length} products`
+      );
+      const products = edges.map(({ node }) => {
+
+        const tags = node.tags || [];
+
+        const colors = new Set();
+        const rawColor = node.metafield?.value;
+
+        if (rawColor) {
+          try {
+            const parsed = JSON.parse(rawColor);
+
+            if (Array.isArray(parsed)) {
+              parsed.forEach(color => {
+                if (color) {
+                  colors.add(String(color).trim());
+                }
+              });
+            } else if (parsed) {
+              colors.add(String(parsed).trim());
+            }
+
+          } catch {
+            colors.add(String(rawColor).trim());
+          }
+        }
+
+        const variants = node.variants.edges.map(({ node: variant }) => ({
+          price: Number(variant.price),
+          compare_at_price: Number(variant.compareAtPrice || 0),
+          inventory_quantity: Number(variant.inventoryQuantity || 0),
+          available: Boolean(variant.availableForSale),
+
+          options: variant.selectedOptions,
+
+          color:
+            variant.selectedOptions.find(
+              o => o.name.toLowerCase() === "color"
+            )?.value || null,
+
+          size:
+            variant.selectedOptions.find(
+              o => o.name.toLowerCase() === "size"
+            )?.value || null
+        }));
+
+        const collectionHandles =
+          node.collections?.edges?.map(c => c.node.handle) || [];
+        if (!collectionHandles.length) {
+          console.warn(
+            "No collections:",
+            node.title,
+            node.handle
+          );
+        }
+        return {
+          id: node.id,
+
+          title: node.title,
+
+          handle: node.handle,
+
+          vendor: node.vendor,
+
+          product_type: node.productType,
+
+          collection: node.productType,
+
+          collection_handle: collectionHandles,
+
+          price: getPrice(node.variants),
+          variants: JSON.stringify(variants),
+
+          inventory_quantity: variants.reduce(
+            (sum, v) => sum + v.inventory_quantity,
+            0
+          ),
+
+          published: true,
+
+          status: "ACTIVE",
+
+          compare_at_price:
+            Number.parseFloat(
+              node.variants?.edges?.[0]?.node?.compareAtPrice || 0
+            ),
+
+          image: getFirstImage(node.images),
+
+          images: JSON.stringify(getAllImages(node.images)),
+
+          color: JSON.stringify([...colors]),
+
+          size: extractTag(tags, "Size"),
+
+          fabric: extractTag(tags, "Fabric"),
+
+          delivery_timeline: extractTag(tags, "Delivery"),
+
+        };
+
+      });
+
+      console.log(
+        `Prepared ${products.length} products`
+      );
+      let retries = 3;
+
+      while (retries > 0) {
+
+        const { error } = await supabase
+          .from("products")
+          .upsert(
+            products,
+            {
+              onConflict: "id",
+              ignoreDuplicates: false,
+            }
+          );
+
+        if (!error) {
+          break;
+        }
+
+        retries--;
+
+        console.error(
+          `Supabase Upsert Failed (${3 - retries}/3)`
+        );
+
+        console.error(error);
+
+        if (retries === 0) {
+          throw error;
+        }
+
+        console.log(
+          "Retrying in 2 seconds..."
+        );
+
+        await new Promise(resolve =>
+          setTimeout(resolve, 2000)
+        );
+      }
+
+      totalSynced += products.length;
+
+      console.log(
+        `✓ Batch ${batch} Complete`
       );
 
-      await new Promise(resolve =>
-        setTimeout(resolve, 2000)
+      console.log(
+        `✓ Total Synced: ${totalSynced}`
       );
-    }
 
-    totalSynced += products.length;
+      console.log(
+        "--------------------------------"
+      );
 
-    console.log(
-      `✓ Batch ${batch} Complete`
-    );
-
-    console.log(
-      `✓ Total Synced: ${totalSynced}`
-    );
-
-    console.log(
-      "--------------------------------"
-    );
-
-    batch++;
-      } // End while
-      await buildFilterCache();
- console.log("\n================================");
+      batch++;
+    } // End while
+    await buildFilterCache();
+    console.log("\n================================");
     console.log("✅ Shopify Sync Completed");
     console.log(`📦 Total Products Synced: ${totalSynced}`);
     console.log("================================\n");
@@ -489,7 +479,78 @@ variants
 
   const collections = {};
 
+  // "all" aggregates every active/published product regardless of collection,
+  // so requests for collection=all can also be served from the cache.
+  collections["all"] = {
+    vendors: new Set(),
+    productTypes: new Set(),
+    colors: new Set(),
+    fabrics: new Set(),
+    delivery: new Set(),
+    sizes: new Set(),
+    prices: []
+  };
+
+  const addValues = (value, set) => {
+    if (!value) return;
+
+    let arr = [];
+
+    try {
+      arr = Array.isArray(value)
+        ? value
+        : JSON.parse(value);
+    } catch {
+      arr = String(value).split(",");
+    }
+
+    arr
+      .flatMap(v => {
+        if (typeof v === "object" && v !== null) {
+          return Object.values(v);
+        }
+
+        return String(v).split(",");
+      })
+      .map(v => v.trim())
+      .filter(Boolean)
+      .forEach(v => set.add(v));
+  };
+
+  const applyProductToBucket = (c, product) => {
+    if (product.vendor)
+      c.vendors.add(product.vendor.trim());
+
+    if (product.product_type)
+      c.productTypes.add(product.product_type.trim());
+
+    if (product.price)
+      c.prices.push(Number(product.price));
+
+    addValues(product.color, c.colors);
+    addValues(product.fabric, c.fabrics);
+    addValues(product.delivery_timeline, c.delivery);
+
+    let variants = [];
+
+    try {
+      variants = JSON.parse(product.variants || "[]");
+    } catch {}
+
+    variants.forEach((variant) => {
+      if (
+        variant.size &&
+        (variant.available || variant.inventory_quantity > 0)
+      ) {
+        c.sizes.add(variant.size.trim());
+      }
+    });
+  };
+
   for (const product of products) {
+    // Always roll into the "all" bucket
+    applyProductToBucket(collections["all"], product);
+
     let handles = product.collection_handle;
 
     if (!handles) continue;
@@ -518,105 +579,47 @@ variants
         };
       }
 
-      const c = collections[handle];
-
-      if (product.vendor)
-        c.vendors.add(product.vendor.trim());
-
-      if (product.product_type)
-        c.productTypes.add(product.product_type.trim());
-
-      if (product.price)
-        c.prices.push(Number(product.price));
-
-const addValues = (value, set) => {
-  if (!value) return;
-
-  let arr = [];
-
-  try {
-    arr = Array.isArray(value)
-      ? value
-      : JSON.parse(value);
-  } catch {
-    arr = String(value).split(",");
-  }
-
-  arr
-    .flatMap(v => {
-      if (typeof v === "object" && v !== null) {
-        return Object.values(v);
-      }
-
-      return String(v).split(",");
-    })
-    .map(v => v.trim())
-    .filter(Boolean)
-    .forEach(v => set.add(v));
-};
-
-
-
-      addValues(product.color, c.colors);
-
-      addValues(product.fabric, c.fabrics);
-      addValues(product.delivery_timeline, c.delivery);
- let variants = [];
-
-try {
-  variants = JSON.parse(product.variants || "[]");
-} catch {}
-
-variants.forEach((variant) => {
-  if (
-    variant.size &&
-    (variant.available || variant.inventory_quantity > 0)
-  ) {
-    c.sizes.add(variant.size.trim());
-  }
-});
-
+      applyProductToBucket(collections[handle], product);
     });
   }
- 
- console.log(`Collections Found: ${Object.keys(collections).length}`);
 
+  console.log(`Collections Found: ${Object.keys(collections).length} (including "all")`);
 
-const rows = Object.entries(collections).map(([handle, data]) => ({
-  collection_handle: handle,
-  filters: {
-    vendors: [...data.vendors].sort().map(name => ({ name })),
-    productTypes: [...data.productTypes].sort().map(name => ({ name })),
-    colors: [...data.colors].sort().map(name => ({ name })),
-    fabrics: [...data.fabrics].sort(),
-    delivery_timeline: [...data.delivery].sort(),
-    sizes: [...data.sizes].sort().map(name => ({
-      name,
-      available: true
-    })),
-    priceRange: {
-      min: data.prices.length ? Math.min(...data.prices) : 0,
-      max: data.prices.length ? Math.max(...data.prices) : 0
-    }
-  },
-  updated_at: new Date().toISOString()
-}));
-await supabase
-  .from("filter_cache")
-  .delete()
-  .neq("collection_handle", "");
-  
-const { error: cacheError } = await supabase
-  .from("filter_cache")
-  .upsert(rows, {
-    onConflict: "collection_handle"
-  });
+  const rows = Object.entries(collections).map(([handle, data]) => ({
+    collection_handle: handle,
+    filters: {
+      vendors: [...data.vendors].sort().map(name => ({ name })),
+      productTypes: [...data.productTypes].sort().map(name => ({ name })),
+      colors: [...data.colors].sort().map(name => ({ name })),
+      fabrics: [...data.fabrics].sort(),
+      delivery_timeline: [...data.delivery].sort(),
+      sizes: [...data.sizes].sort().map(name => ({
+        name,
+        available: true
+      })),
+      priceRange: {
+        min: data.prices.length ? Math.min(...data.prices) : 0,
+        max: data.prices.length ? Math.max(...data.prices) : 0
+      }
+    },
+    updated_at: new Date().toISOString()
+  }));
+  await supabase
+    .from("filter_cache")
+    .delete()
+    .neq("collection_handle", "");
 
-if (cacheError) throw cacheError;
+  const { error: cacheError } = await supabase
+    .from("filter_cache")
+    .upsert(rows, {
+      onConflict: "collection_handle"
+    });
 
-console.log(`✅ Filter cache updated (${rows.length} collections)`);
+  if (cacheError) throw cacheError;
 
-return rows.length;
+  console.log(`✅ Filter cache updated (${rows.length} collections)`);
+
+  return rows.length;
 }
 
 /* =========================================================
@@ -624,7 +627,7 @@ return rows.length;
 ========================================================= */
 
 const SYNC_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 hours
-const syncHistory = []; // keeps the last 2 runs: { startedAt, finishedAt, success, totalSynced }
+const syncHistory = []; // keeps the last 2 runs: { startedAt, finishedAt, success, totalSynced, error }
 
 function formatTime(date) {
   return date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour12: true });
