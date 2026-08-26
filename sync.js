@@ -29,7 +29,7 @@ async function getAccessToken() {
       headers: {
         "Content-Type": "application/x-www-form-urlencoded"
       },
-      body: new URLSearchParams({
+       body: new URLSearchParams({
         grant_type: "client_credentials",
         client_id: process.env.SHOPIFY_CLIENT_ID || "53dfed9eb56ffec51c0f8e66178afb55",
         client_secret: process.env.SHOPIFY_CLIENT_SECRET || "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"
@@ -65,7 +65,7 @@ const API_VERSION =
   "2026-07";
 
 const supabase = createClient(
-  process.env.SUPABASE_URL || "https://rflabvnooobawvhxkuoi.supabase.co",
+process.env.SUPABASE_URL || "https://rflabvnooobawvhxkuoi.supabase.co",
   process.env.SUPABASE_SERVICE_ROLE_KEY || "sb_publishable_7QPCLDGw0t6YloSbtA6Y0w_weJ86qO5"
 );
 
@@ -287,36 +287,9 @@ const productConnection = data.data.products;
         
 
       const tags = node.tags || [];
-     console.log("\n================================");
-console.log("Product:", node.title);
-console.log("Tags:", node.tags);
-if (node.handle === "white-black-mesh-co-ord") {
-  node.variants.edges.forEach(({ node: variant }, index) => {
-    console.log(`Variant ${index + 1}:`);
-    console.log(JSON.stringify(variant.selectedOptions, null, 2));
-  });
-}
-console.log(
-  "Variant Options:",
-  JSON.stringify(
-    node.variants.edges.map(v => v.node.selectedOptions),
-    null,
-    2
-  )
-);
-console.log("================================");
+
     const colors = new Set();
 const rawColor = node.metafield?.value;
-
-if (node.handle === "blue-mori-suit-set") {
-  console.log({
-    handle: node.handle,
-    metafield: node.metafield,
-    rawColor,
-    variantOptions: node.variants.edges.map(v => v.node.selectedOptions)
-  });
-}
-
 
 if (rawColor) {
   try {
@@ -336,11 +309,6 @@ if (rawColor) {
     colors.add(String(rawColor).trim());
   }
 }
-console.log({
-  product: node.title,
-  rawColor,
-  parsedColors: [...colors]
-});
 
       const variants = node.variants.edges.map(({ node: variant }) => ({
   price: Number(variant.price),
@@ -361,11 +329,6 @@ console.log({
     )?.value || null
 }));
 
-console.log(
-  node.title,
-  JSON.stringify(node.variants.edges[0]?.node?.selectedOptions, null, 2)
-);
-
       const collectionHandles =
   node.collections?.edges?.map(c => c.node.handle) || [];
 if (!collectionHandles.length) {
@@ -375,11 +338,6 @@ if (!collectionHandles.length) {
         node.handle
     );
 }
-console.log({
-  product: node.title,
-  metafieldColor: node.metafield?.value,
-  storedColors: [...colors]
-});
       return {
         id: node.id,
 
@@ -481,9 +439,7 @@ status: "ACTIVE",
     console.log(
       `✓ Total Synced: ${totalSynced}`
     );
-// console.log(
-//   `${Math.round((totalSynced / totalProducts) * 100)}% Complete`
-// );
+
     console.log(
       "--------------------------------"
     );
@@ -496,6 +452,8 @@ status: "ACTIVE",
     console.log(`📦 Total Products Synced: ${totalSynced}`);
     console.log("================================\n");
 
+    return { success: true, totalSynced };
+
   } catch (error) {
 
     console.error("\n================================");
@@ -504,7 +462,7 @@ status: "ACTIVE",
 
     console.error(error);
 
-    process.exitCode = 1;
+    return { success: false, error: error.message };
   }
 }
 /* =========================================================
@@ -600,21 +558,7 @@ const addValues = (value, set) => {
 
 
       addValues(product.color, c.colors);
-     
-      console.log(
-  "Product:",
-  product.title,
-  "Stored color:",
-  product.color,
-  "Parsed:",
-  (() => {
-    try {
-      return JSON.parse(product.color);
-    } catch {
-      return product.color;
-    }
-  })()
-);
+
       addValues(product.fabric, c.fabrics);
       addValues(product.delivery_timeline, c.delivery);
  let variants = [];
@@ -634,7 +578,7 @@ variants.forEach((variant) => {
 
     });
   }
-
+ 
  console.log(`Collections Found: ${Object.keys(collections).length}`);
 
 
@@ -671,20 +615,68 @@ const { error: cacheError } = await supabase
 if (cacheError) throw cacheError;
 
 console.log(`✅ Filter cache updated (${rows.length} collections)`);
-console.log(rows.slice(0,3));
 
 return rows.length;
 }
 
 /* =========================================================
-   START
+   SCHEDULER — runs immediately, then every 2 hours
 ========================================================= */
 
-syncProducts()
-  .then(() => {
-    console.log("Done.");
-  })
-  .catch((err) => {
-    console.error(err);
-    process.exit(1);
+const SYNC_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 hours
+const syncHistory = []; // keeps the last 2 runs: { startedAt, finishedAt, success, totalSynced }
+
+function formatTime(date) {
+  return date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour12: true });
+}
+
+function logSyncHistory() {
+  console.log("\n🕒 Sync History (last 2 runs):");
+  if (syncHistory.length === 0) {
+    console.log("  (none yet)");
+  } else {
+    syncHistory.forEach((run, i) => {
+      const status = run.success ? "✅ success" : "❌ failed";
+      console.log(
+        `  ${i + 1}. ${formatTime(run.startedAt)} → ${formatTime(run.finishedAt)} | ${status}` +
+          (run.success ? ` | ${run.totalSynced} products` : ` | ${run.error}`)
+      );
+    });
+  }
+  console.log(`⏭  Next sync scheduled: ${formatTime(new Date(Date.now() + SYNC_INTERVAL_MS))}\n`);
+}
+
+async function runScheduledSync() {
+  const startedAt = new Date();
+
+  const result = await syncProducts();
+
+  const finishedAt = new Date();
+
+  syncHistory.push({
+    startedAt,
+    finishedAt,
+    success: result.success,
+    totalSynced: result.totalSynced,
+    error: result.error
   });
+
+  // Keep only the last 2 runs
+  if (syncHistory.length > 2) {
+    syncHistory.shift();
+  }
+
+  logSyncHistory();
+}
+
+async function startScheduler() {
+  console.log(`⏱  Scheduler started — syncing every 2 hours.\n`);
+
+  // Run immediately on startup
+  await runScheduledSync();
+
+  // Then run every 2 hours
+  setInterval(runScheduledSync, SYNC_INTERVAL_MS);
+}
+
+startScheduler();
