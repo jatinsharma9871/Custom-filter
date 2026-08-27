@@ -63,8 +63,8 @@ export default async function handler(req, res) {
     // Escapes a value for safe use inside a PostgREST .or() filter string.
     // Commas and parentheses are meaningful in that syntax, so they're
     // stripped rather than matched literally.
-   const escapeForOr = (value) =>
-  String(value).replace(/[(),"\\*]/g, "");
+    const escapeForOr = (value) =>
+      String(value).replace(/[(),]/g, "");
 
     const variantIsAvailable = (variant) =>
       variant &&
@@ -88,7 +88,7 @@ export default async function handler(req, res) {
 
     /* ================= BUILD PRODUCT QUERY ================= */
 
-        const PRODUCT_COLUMNS = `
+    const PRODUCT_COLUMNS = `
 id,
 title,
 handle,
@@ -105,15 +105,13 @@ delivery_timeline,
 inventory_quantity,
 created_at,
 collection_handle,
-position,
-status,
-published
+position
 `;
 
-        let query = supabase
+    let query = supabase
       .from("products")
       .select(PRODUCT_COLUMNS, { count: "exact" })
-      .ilike("status", "active")
+      .eq("status", "ACTIVE")
       .eq("published", true);
 
     if (normalizedCollection && normalizedCollection !== "all") {
@@ -132,11 +130,11 @@ published
       query = query.in("product_type", toList(product_type));
     }
 
-        if (minPrice !== undefined && minPrice !== "" && !Number.isNaN(Number(minPrice))) {
+    if (minPrice) {
       query = query.gte("price", Number(minPrice));
     }
 
-    if (maxPrice !== undefined && maxPrice !== "" && !Number.isNaN(Number(maxPrice))) {
+    if (maxPrice) {
       query = query.lte("price", Number(maxPrice));
     }
 
@@ -198,28 +196,14 @@ published
     }
 
     /* ================= FETCH ================= */
-    // Availability check is defined here so it can run before pagination
-    // in both branches below.
-        const isProductAvailable = (product) => {
-      if (Number(product.inventory_quantity) > 0) return true;
-      return safeParse(product.variants).some(variantIsAvailable);
-    };
-
-    // Safety net: even though the query already filters status/published,
-    // this guarantees a draft/unpublished row can NEVER reach the response,
-    // regardless of inconsistent DB values (casing, string "true", nulls, etc.)
-    // or a bug anywhere upstream.
-    const isPublishedAndActive = (product) => {
-      const status = String(product.status || "").trim().toLowerCase();
-      const published =
-        product.published === true || product.published === "true";
-      return status === "active" && published;
-    };
 
     let allProducts, total;
 
     if (size) {
-      const { data, error } = await query;
+      // Size availability lives inside the `variants` JSON blob and can't
+      // be filtered in SQL here, so pull the (already narrowed-by-other-
+      // filters) matching rows and finish filtering + paginate in memory.
+      const { data, error, count } = await query;
 
       if (error) {
         console.error("Supabase Error:", error);
@@ -228,55 +212,55 @@ published
 
       const selectedSizes = toList(size).map(normalize);
 
-           const filtered = (data || []).filter(
-        (product) =>
-          isPublishedAndActive(product) &&
-          isProductAvailable(product) &&
-          safeParse(product.variants).some(
-            (variant) =>
-              selectedSizes.includes(normalize(variant?.size)) &&
-              variantIsAvailable(variant)
-          )
+      allProducts = (data || []).filter((product) =>
+        safeParse(product.variants).some(
+          (variant) =>
+            selectedSizes.includes(normalize(variant?.size)) &&
+            variantIsAvailable(variant)
+        )
       );
 
-      total = filtered.length;
-      allProducts = filtered.slice(
+      total = allProducts.length;
+      allProducts = allProducts.slice(
         (currentPage - 1) * PAGE_LIMIT,
         currentPage * PAGE_LIMIT
       );
     } else {
-      // No size filter, but we still need to filter by availability
-      // BEFORE paginating, so fetch unpaginated here rather than using
-      // .range(). This trades DB-side pagination for correctness; if the
-      // catalog is large, consider adding an availability column so this
-      // can go back to being filtered in SQL with .range() again.
-      const { data, error } = await query;
+      // No size filter: page directly in Postgres.
+      const from = (currentPage - 1) * PAGE_LIMIT;
+      const to = from + PAGE_LIMIT - 1;
+
+      const { data, error, count } = await query.range(from, to);
 
       if (error) {
         console.error("Supabase Error:", error);
         return res.status(500).json({ error: error.message });
       }
 
-            const filtered = (data || []).filter(
-        (product) => isPublishedAndActive(product) && isProductAvailable(product)
-      );
-
-      total = filtered.length;
-      allProducts = filtered.slice(
-        (currentPage - 1) * PAGE_LIMIT,
-        currentPage * PAGE_LIMIT
-      );
+      allProducts = data || [];
+      total = count ?? allProducts.length;
     }
 
-       const paginatedProducts = allProducts.map((product) => {
-      const { status, published, ...rest } = product;
-      return {
-        ...rest,
+    /* ================= INVENTORY FILTER (in-page only) ================= */
+
+    const paginatedProducts = allProducts
+      .filter((product) => {
+        if (Number(product.inventory_quantity) > 0) return true;
+        return safeParse(product.variants).some(variantIsAvailable);
+      })
+      .map((product) => ({
+        ...product,
         price: Number(product.price || 0),
-        compare_at_price: Number(product.compare_at_price || 0)
-      };
-    });
+        compare_at_price: Number(
+          product.compare_at_price ||
+            product.compareAtPrice ||
+            product.mrp ||
+            0
+        )
+      }));
+
     const totalPages = Math.max(1, Math.ceil(total / PAGE_LIMIT));
+
     /* ================= FILTERS RESPONSE ================= */
 
     const normalizeCachedNames = (arr) =>
