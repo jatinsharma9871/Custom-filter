@@ -63,8 +63,8 @@ export default async function handler(req, res) {
     // Escapes a value for safe use inside a PostgREST .or() filter string.
     // Commas and parentheses are meaningful in that syntax, so they're
     // stripped rather than matched literally.
-    const escapeForOr = (value) =>
-      String(value).replace(/[(),]/g, "");
+   const escapeForOr = (value) =>
+  String(value).replace(/[(),"\\*]/g, "");
 
     const variantIsAvailable = (variant) =>
       variant &&
@@ -130,11 +130,11 @@ position
       query = query.in("product_type", toList(product_type));
     }
 
-    if (minPrice) {
+        if (minPrice !== undefined && minPrice !== "" && !Number.isNaN(Number(minPrice))) {
       query = query.gte("price", Number(minPrice));
     }
 
-    if (maxPrice) {
+    if (maxPrice !== undefined && maxPrice !== "" && !Number.isNaN(Number(maxPrice))) {
       query = query.lte("price", Number(maxPrice));
     }
 
@@ -196,14 +196,17 @@ position
     }
 
     /* ================= FETCH ================= */
+    // Availability check is defined here so it can run before pagination
+    // in both branches below.
+    const isProductAvailable = (product) => {
+      if (Number(product.inventory_quantity) > 0) return true;
+      return safeParse(product.variants).some(variantIsAvailable);
+    };
 
     let allProducts, total;
 
     if (size) {
-      // Size availability lives inside the `variants` JSON blob and can't
-      // be filtered in SQL here, so pull the (already narrowed-by-other-
-      // filters) matching rows and finish filtering + paginate in memory.
-      const { data, error, count } = await query;
+      const { data, error } = await query;
 
       if (error) {
         console.error("Supabase Error:", error);
@@ -212,55 +215,50 @@ position
 
       const selectedSizes = toList(size).map(normalize);
 
-      allProducts = (data || []).filter((product) =>
-        safeParse(product.variants).some(
-          (variant) =>
-            selectedSizes.includes(normalize(variant?.size)) &&
-            variantIsAvailable(variant)
-        )
+      const filtered = (data || []).filter(
+        (product) =>
+          isProductAvailable(product) &&
+          safeParse(product.variants).some(
+            (variant) =>
+              selectedSizes.includes(normalize(variant?.size)) &&
+              variantIsAvailable(variant)
+          )
       );
 
-      total = allProducts.length;
-      allProducts = allProducts.slice(
+      total = filtered.length;
+      allProducts = filtered.slice(
         (currentPage - 1) * PAGE_LIMIT,
         currentPage * PAGE_LIMIT
       );
     } else {
-      // No size filter: page directly in Postgres.
-      const from = (currentPage - 1) * PAGE_LIMIT;
-      const to = from + PAGE_LIMIT - 1;
-
-      const { data, error, count } = await query.range(from, to);
+      // No size filter, but we still need to filter by availability
+      // BEFORE paginating, so fetch unpaginated here rather than using
+      // .range(). This trades DB-side pagination for correctness; if the
+      // catalog is large, consider adding an availability column so this
+      // can go back to being filtered in SQL with .range() again.
+      const { data, error } = await query;
 
       if (error) {
         console.error("Supabase Error:", error);
         return res.status(500).json({ error: error.message });
       }
 
-      allProducts = data || [];
-      total = count ?? allProducts.length;
+      const filtered = (data || []).filter(isProductAvailable);
+
+      total = filtered.length;
+      allProducts = filtered.slice(
+        (currentPage - 1) * PAGE_LIMIT,
+        currentPage * PAGE_LIMIT
+      );
     }
 
-    /* ================= INVENTORY FILTER (in-page only) ================= */
-
-    const paginatedProducts = allProducts
-      .filter((product) => {
-        if (Number(product.inventory_quantity) > 0) return true;
-        return safeParse(product.variants).some(variantIsAvailable);
-      })
-      .map((product) => ({
-        ...product,
-        price: Number(product.price || 0),
-        compare_at_price: Number(
-          product.compare_at_price ||
-            product.compareAtPrice ||
-            product.mrp ||
-            0
-        )
-      }));
+    const paginatedProducts = allProducts.map((product) => ({
+      ...product,
+      price: Number(product.price || 0),
+      compare_at_price: Number(product.compare_at_price || 0)
+    }));
 
     const totalPages = Math.max(1, Math.ceil(total / PAGE_LIMIT));
-
     /* ================= FILTERS RESPONSE ================= */
 
     const normalizeCachedNames = (arr) =>
