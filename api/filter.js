@@ -88,7 +88,7 @@ export default async function handler(req, res) {
 
     /* ================= BUILD PRODUCT QUERY ================= */
 
-    const PRODUCT_COLUMNS = `
+        const PRODUCT_COLUMNS = `
 id,
 title,
 handle,
@@ -105,13 +105,15 @@ delivery_timeline,
 inventory_quantity,
 created_at,
 collection_handle,
-position
+position,
+status,
+published
 `;
 
-    let query = supabase
+        let query = supabase
       .from("products")
       .select(PRODUCT_COLUMNS, { count: "exact" })
-   .ilike("status", "active")
+      .ilike("status", "active")
       .eq("published", true);
 
     if (normalizedCollection && normalizedCollection !== "all") {
@@ -198,9 +200,20 @@ position
     /* ================= FETCH ================= */
     // Availability check is defined here so it can run before pagination
     // in both branches below.
-    const isProductAvailable = (product) => {
+        const isProductAvailable = (product) => {
       if (Number(product.inventory_quantity) > 0) return true;
       return safeParse(product.variants).some(variantIsAvailable);
+    };
+
+    // Safety net: even though the query already filters status/published,
+    // this guarantees a draft/unpublished row can NEVER reach the response,
+    // regardless of inconsistent DB values (casing, string "true", nulls, etc.)
+    // or a bug anywhere upstream.
+    const isPublishedAndActive = (product) => {
+      const status = String(product.status || "").trim().toLowerCase();
+      const published =
+        product.published === true || product.published === "true";
+      return status === "active" && published;
     };
 
     let allProducts, total;
@@ -215,8 +228,9 @@ position
 
       const selectedSizes = toList(size).map(normalize);
 
-      const filtered = (data || []).filter(
+           const filtered = (data || []).filter(
         (product) =>
+          isPublishedAndActive(product) &&
           isProductAvailable(product) &&
           safeParse(product.variants).some(
             (variant) =>
@@ -243,7 +257,9 @@ position
         return res.status(500).json({ error: error.message });
       }
 
-      const filtered = (data || []).filter(isProductAvailable);
+            const filtered = (data || []).filter(
+        (product) => isPublishedAndActive(product) && isProductAvailable(product)
+      );
 
       total = filtered.length;
       allProducts = filtered.slice(
@@ -252,12 +268,14 @@ position
       );
     }
 
-    const paginatedProducts = allProducts.map((product) => ({
-      ...product,
-      price: Number(product.price || 0),
-      compare_at_price: Number(product.compare_at_price || 0)
-    }));
-
+       const paginatedProducts = allProducts.map((product) => {
+      const { status, published, ...rest } = product;
+      return {
+        ...rest,
+        price: Number(product.price || 0),
+        compare_at_price: Number(product.compare_at_price || 0)
+      };
+    });
     const totalPages = Math.max(1, Math.ceil(total / PAGE_LIMIT));
     /* ================= FILTERS RESPONSE ================= */
 
