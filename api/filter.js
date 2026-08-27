@@ -111,7 +111,7 @@ position
     let query = supabase
       .from("products")
       .select(PRODUCT_COLUMNS, { count: "exact" })
-      .eq("status", "ACTIVE")
+   .ilike("status", "active")
       .eq("published", true);
 
     if (normalizedCollection && normalizedCollection !== "all") {
