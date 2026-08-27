@@ -180,13 +180,15 @@ query GetProducts($cursor: String) {
     }
 
     edges {
-      node {
+         node {
         id
         title
         handle
         vendor
         productType
         tags
+        status
+        publishedAt
         metafield(namespace: "custom", key: "color1") {
   value
 }
@@ -353,9 +355,9 @@ async function syncProducts() {
             0
           ),
 
-          published: true,
+                published: Boolean(node.publishedAt),
 
-          status: "ACTIVE",
+          status: node.status,
 
           compare_at_price:
             Number.parseFloat(
@@ -462,7 +464,7 @@ async function syncProducts() {
 async function buildFilterCache() {
   console.log("\nBuilding Filter Cache...");
 
-  const { data: products, error } = await supabase
+    const { data: products, error } = await supabase
     .from("products")
     .select(`
 title,
@@ -473,8 +475,13 @@ color,
 fabric,
 delivery_timeline,
 price,
-variants
+variants,
+status,
+published
 `)
+    .ilike("status", "active")
+    .eq("published", true);
+
   if (error) throw error;
 
   const collections = {};
