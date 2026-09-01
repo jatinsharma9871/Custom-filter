@@ -7,6 +7,42 @@ const supabase = createClient(
 
 const PAGE_LIMIT = 12;
 
+// Full columns — only ever fetched for the ~12 rows on the current page.
+const PRODUCT_COLUMNS = `
+id,
+title,
+handle,
+vendor,
+product_type,
+price,
+compare_at_price,
+image,
+images,
+variants,
+fabric,
+color,
+delivery_timeline,
+inventory_quantity,
+created_at,
+collection_handle,
+position,
+status,
+published
+`;
+
+// Lean columns — used for the filtering/availability/pagination pass.
+// Keeping this narrow is what keeps the bulk query fast; it must include
+// everything isProductAvailable/isPublishedAndActive/size-filtering needs.
+const FILTER_PASS_COLUMNS = `
+id,
+price,
+variants,
+inventory_quantity,
+status,
+published,
+collection_handle
+`;
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
@@ -63,8 +99,8 @@ export default async function handler(req, res) {
     // Escapes a value for safe use inside a PostgREST .or() filter string.
     // Commas and parentheses are meaningful in that syntax, so they're
     // stripped rather than matched literally.
-   const escapeForOr = (value) =>
-  String(value).replace(/[(),"\\*]/g, "");
+    const escapeForOr = (value) =>
+      String(value).replace(/[(),"\\*]/g, "");
 
     const variantIsAvailable = (variant) =>
       variant &&
@@ -72,135 +108,153 @@ export default async function handler(req, res) {
 
     const currentPage = Math.max(1, Number(page) || 1);
 
-    /* ================= FILTER OPTIONS (from cache) ================= */
+    /* ================= FILTER OPTIONS (from cache) =================
+       This is intentionally independent of the product query below.
+       A slow/timed-out product fetch must never prevent the filter
+       panel itself from rendering. */
 
-    const { data: cacheRow, error: cacheError } = await supabase
-      .from("filter_cache")
-      .select("filters")
-      .eq("collection_handle", normalizedCollection)
-      .maybeSingle();
+    let filters = {
+      vendors: [],
+      productTypes: [],
+      colors: [],
+      fabrics: [],
+      delivery_timeline: [],
+      sizes: [],
+      priceRange: { min: 0, max: 0 }
+    };
 
-    if (cacheError) {
-      console.error("Filter cache lookup error:", cacheError);
+    try {
+      const { data: cacheRow, error: cacheError } = await supabase
+        .from("filter_cache")
+        .select("filters")
+        .eq("collection_handle", normalizedCollection)
+        .maybeSingle();
+
+      if (cacheError) {
+        console.error("Filter cache lookup error:", cacheError);
+      }
+
+      const cachedFilters = cacheRow?.filters || null;
+      const normalizeCachedNames = (arr) =>
+        (arr || []).map((v) => (typeof v === "object" ? v : { name: v }));
+
+      if (cachedFilters) {
+        filters = {
+          vendors: normalizeCachedNames(cachedFilters.vendors),
+          productTypes: normalizeCachedNames(cachedFilters.productTypes),
+          colors: normalizeCachedNames(cachedFilters.colors),
+          fabrics: cachedFilters.fabrics || [],
+          delivery_timeline: cachedFilters.delivery_timeline || [],
+          sizes: cachedFilters.sizes || [],
+          priceRange: cachedFilters.priceRange || { min: 0, max: 0 }
+        };
+      }
+    } catch (err) {
+      // Never let a filter_cache problem take down the whole response.
+      console.error("Filter cache fetch threw:", err);
     }
 
-    const cachedFilters = cacheRow?.filters || null;
+    /* ================= BUILD PRODUCT QUERY (helper) ================= */
 
-    /* ================= BUILD PRODUCT QUERY ================= */
+    const buildQuery = (columns) => {
+      let query = supabase
+        .from("products")
+        .select(columns, { count: "exact" })
+        .ilike("status", "active")
+        .eq("published", true);
 
-        const PRODUCT_COLUMNS = `
-id,
-title,
-handle,
-vendor,
-product_type,
-price,
-compare_at_price,
-image,
-images,
-variants,
-fabric,
-color,
-delivery_timeline,
-inventory_quantity,
-created_at,
-collection_handle,
-position,
-status,
-published
-`;
+      if (normalizedCollection && normalizedCollection !== "all") {
+        query = query.filter(
+          "collection_handle",
+          "cs",
+          `["${normalizedCollection}"]`
+        );
+      }
 
-        let query = supabase
-      .from("products")
-      .select(PRODUCT_COLUMNS, { count: "exact" })
-      .ilike("status", "active")
-      .eq("published", true);
+      if (vendor) {
+        query = query.in("vendor", toList(vendor));
+      }
 
-    if (normalizedCollection && normalizedCollection !== "all") {
-      query = query.filter(
-        "collection_handle",
-        "cs",
-        `["${normalizedCollection}"]`
-      );
-    }
+      if (product_type) {
+        query = query.in("product_type", toList(product_type));
+      }
 
-    if (vendor) {
-      query = query.in("vendor", toList(vendor));
-    }
+      if (minPrice !== undefined && minPrice !== "" && !Number.isNaN(Number(minPrice))) {
+        query = query.gte("price", Number(minPrice));
+      }
 
-    if (product_type) {
-      query = query.in("product_type", toList(product_type));
-    }
+      if (maxPrice !== undefined && maxPrice !== "" && !Number.isNaN(Number(maxPrice))) {
+        query = query.lte("price", Number(maxPrice));
+      }
 
-        if (minPrice !== undefined && minPrice !== "" && !Number.isNaN(Number(minPrice))) {
-      query = query.gte("price", Number(minPrice));
-    }
+      // color/fabric/delivery_timeline are stored as JSON-encoded text
+      // (e.g. `["Black","Blue"]`), so containment is checked with a
+      // quoted-substring ILIKE match pushed down to Postgres instead of
+      // pulling every row into Node to filter in memory.
+      // Note: inside a PostgREST .or() filter string, "*" is the wildcard
+      // (not "%") — it's an alias PostgREST provides specifically so
+      // pattern characters don't collide with the filter string's own
+      // reserved characters (commas, periods, etc).
+      // NOTE: these are leading-wildcard ILIKE scans and are the main
+      // remaining cost in this query. Converting color/fabric/
+      // delivery_timeline to real jsonb/text[] columns with a GIN index
+      // (and switching these to .contains()/.overlaps()) would remove
+      // this cost entirely — recommended as a follow-up.
+      if (color) {
+        const selectedColors = toList(color);
+        const orExpr = selectedColors
+          .map((c) => `color.ilike.*"${escapeForOr(c)}"*`)
+          .join(",");
+        if (orExpr) query = query.or(orExpr);
+      }
 
-    if (maxPrice !== undefined && maxPrice !== "" && !Number.isNaN(Number(maxPrice))) {
-      query = query.lte("price", Number(maxPrice));
-    }
+      if (fabric) {
+        const selectedFabrics = toList(fabric);
+        const orExpr = selectedFabrics
+          .map((f) => `fabric.ilike.*${escapeForOr(f)}*`)
+          .join(",");
+        if (orExpr) query = query.or(orExpr);
+      }
 
-    // color/fabric/delivery_timeline are stored as JSON-encoded text
-    // (e.g. `["Black","Blue"]`), so containment is checked with a
-    // quoted-substring ILIKE match pushed down to Postgres instead of
-    // pulling every row into Node to filter in memory.
-    // Note: inside a PostgREST .or() filter string, "*" is the wildcard
-    // (not "%") — it's an alias PostgREST provides specifically so
-    // pattern characters don't collide with the filter string's own
-    // reserved characters (commas, periods, etc).
-    if (color) {
-      const selectedColors = toList(color);
-      const orExpr = selectedColors
-        .map((c) => `color.ilike.*"${escapeForOr(c)}"*`)
-        .join(",");
-      if (orExpr) query = query.or(orExpr);
-    }
+      if (delivery_timeline) {
+        const selectedDeliveryTimes = toList(delivery_timeline);
+        const orExpr = selectedDeliveryTimes
+          .map((d) => `delivery_timeline.ilike.*${escapeForOr(d)}*`)
+          .join(",");
+        if (orExpr) query = query.or(orExpr);
+      }
 
-    if (fabric) {
-      const selectedFabrics = toList(fabric);
-      const orExpr = selectedFabrics
-        .map((f) => `fabric.ilike.*${escapeForOr(f)}*`)
-        .join(",");
-      if (orExpr) query = query.or(orExpr);
-    }
+      switch (sort_by) {
+        case "price-ascending":
+          query = query.order("price", { ascending: true });
+          break;
 
-    if (delivery_timeline) {
-      const selectedDeliveryTimes = toList(delivery_timeline);
-      const orExpr = selectedDeliveryTimes
-        .map((d) => `delivery_timeline.ilike.*${escapeForOr(d)}*`)
-        .join(",");
-      if (orExpr) query = query.or(orExpr);
-    }
+        case "price-descending":
+          query = query.order("price", { ascending: false });
+          break;
 
-    switch (sort_by) {
-      case "price-ascending":
-        query = query.order("price", { ascending: true });
-        break;
+        case "title-ascending":
+          query = query.order("title", { ascending: true });
+          break;
 
-      case "price-descending":
-        query = query.order("price", { ascending: false });
-        break;
+        case "title-descending":
+          query = query.order("title", { ascending: false });
+          break;
 
-      case "title-ascending":
-        query = query.order("title", { ascending: true });
-        break;
+        case "created-ascending":
+          query = query.order("created_at", { ascending: true });
+          break;
 
-      case "title-descending":
-        query = query.order("title", { ascending: false });
-        break;
+        default:
+          query = query.order("created_at", { ascending: false });
+      }
 
-      case "created-ascending":
-        query = query.order("created_at", { ascending: true });
-        break;
+      return query;
+    };
 
-      default:
-        query = query.order("created_at", { ascending: false });
-    }
+    /* ================= FETCH PRODUCTS (own try/catch) ================= */
 
-    /* ================= FETCH ================= */
-    // Availability check is defined here so it can run before pagination
-    // in both branches below.
-        const isProductAvailable = (product) => {
+    const isProductAvailable = (product) => {
       if (Number(product.inventory_quantity) > 0) return true;
       return safeParse(product.variants).some(variantIsAvailable);
     };
@@ -216,91 +270,84 @@ published
       return status === "active" && published;
     };
 
-    let allProducts, total;
+    let paginatedProducts = [];
+    let total = 0;
+    let productsError = null;
 
-    if (size) {
-      const { data, error } = await query;
+    try {
+      // Lean pass: fetch only what's needed to determine availability,
+      // size match, and pagination — NOT full row data. This is the
+      // pass most exposed to statement timeouts, so keep its payload
+      // as small as possible.
+      const { data, error } = await buildQuery(FILTER_PASS_COLUMNS);
 
-      if (error) {
-        console.error("Supabase Error:", error);
-        return res.status(500).json({ error: error.message });
-      }
+      if (error) throw error;
 
-      const selectedSizes = toList(size).map(normalize);
+      let filteredIds;
 
-           const filtered = (data || []).filter(
-        (product) =>
-          isPublishedAndActive(product) &&
-          isProductAvailable(product) &&
-          safeParse(product.variants).some(
-            (variant) =>
-              selectedSizes.includes(normalize(variant?.size)) &&
-              variantIsAvailable(variant)
+      if (size) {
+        const selectedSizes = toList(size).map(normalize);
+
+        filteredIds = (data || [])
+          .filter(
+            (product) =>
+              isPublishedAndActive(product) &&
+              isProductAvailable(product) &&
+              safeParse(product.variants).some(
+                (variant) =>
+                  selectedSizes.includes(normalize(variant?.size)) &&
+                  variantIsAvailable(variant)
+              )
           )
-      );
-
-      total = filtered.length;
-      allProducts = filtered.slice(
-        (currentPage - 1) * PAGE_LIMIT,
-        currentPage * PAGE_LIMIT
-      );
-    } else {
-      // No size filter, but we still need to filter by availability
-      // BEFORE paginating, so fetch unpaginated here rather than using
-      // .range(). This trades DB-side pagination for correctness; if the
-      // catalog is large, consider adding an availability column so this
-      // can go back to being filtered in SQL with .range() again.
-      const { data, error } = await query;
-
-      if (error) {
-        console.error("Supabase Error:", error);
-        return res.status(500).json({ error: error.message });
+          .map((p) => p.id);
+      } else {
+        filteredIds = (data || [])
+          .filter(
+            (product) => isPublishedAndActive(product) && isProductAvailable(product)
+          )
+          .map((p) => p.id);
       }
 
-            const filtered = (data || []).filter(
-        (product) => isPublishedAndActive(product) && isProductAvailable(product)
-      );
+      total = filteredIds.length;
 
-      total = filtered.length;
-      allProducts = filtered.slice(
+      const pageIds = filteredIds.slice(
         (currentPage - 1) * PAGE_LIMIT,
         currentPage * PAGE_LIMIT
       );
+
+      if (pageIds.length) {
+        // Full-detail pass: only for the ~12 ids on this page, fetched
+        // by primary key (cheap and index-backed regardless of catalog size).
+        const { data: fullData, error: fullError } = await supabase
+          .from("products")
+          .select(PRODUCT_COLUMNS)
+          .in("id", pageIds);
+
+        if (fullError) throw fullError;
+
+        // .in() doesn't preserve order, so restore the sort order that
+        // the lean pass already established.
+        const byId = new Map((fullData || []).map((p) => [p.id, p]));
+        paginatedProducts = pageIds
+          .map((id) => byId.get(id))
+          .filter(Boolean)
+          .map((product) => {
+            const { status, published, ...rest } = product;
+            return {
+              ...rest,
+              price: Number(product.price || 0),
+              compare_at_price: Number(product.compare_at_price || 0)
+            };
+          });
+      }
+    } catch (err) {
+      console.error("Product query error:", err);
+      productsError = err.message || "Failed to load products";
+      // Deliberately not returning here — filters above are still valid
+      // and should still reach the client.
     }
 
-       const paginatedProducts = allProducts.map((product) => {
-      const { status, published, ...rest } = product;
-      return {
-        ...rest,
-        price: Number(product.price || 0),
-        compare_at_price: Number(product.compare_at_price || 0)
-      };
-    });
     const totalPages = Math.max(1, Math.ceil(total / PAGE_LIMIT));
-    /* ================= FILTERS RESPONSE ================= */
-
-    const normalizeCachedNames = (arr) =>
-      (arr || []).map((v) => (typeof v === "object" ? v : { name: v }));
-
-    const filters = cachedFilters
-      ? {
-          vendors: normalizeCachedNames(cachedFilters.vendors),
-          productTypes: normalizeCachedNames(cachedFilters.productTypes),
-          colors: normalizeCachedNames(cachedFilters.colors),
-          fabrics: cachedFilters.fabrics || [],
-          delivery_timeline: cachedFilters.delivery_timeline || [],
-          sizes: cachedFilters.sizes || [],
-          priceRange: cachedFilters.priceRange || { min: 0, max: 0 }
-        }
-      : {
-          vendors: [],
-          productTypes: [],
-          colors: [],
-          fabrics: [],
-          delivery_timeline: [],
-          sizes: [],
-          priceRange: { min: 0, max: 0 }
-        };
 
     return res.status(200).json({
       filters,
@@ -309,7 +356,8 @@ published
         total,
         totalPages,
         currentPage
-      }
+      },
+      ...(productsError ? { productsError } : {})
     });
   } catch (error) {
     console.error("API ERROR:", error);
