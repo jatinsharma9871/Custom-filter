@@ -1,16 +1,32 @@
 import fetch from "node-fetch";
 import { createClient } from "@supabase/supabase-js";
+import "dotenv/config";
 
 /* =========================================================
    CONFIG
 ========================================================= */
 const PAGE_SIZE = 250;
-const SHOP =
-  process.env.SHOPIFY_STORE ||
-  "the-sverve.myshopify.com";
+const SHOP = process.env.SHOPIFY_STORE || "the-sverve.myshopify.com";
 
 let TOKEN = null;
 let TOKEN_EXPIRES = 0;
+
+const API_VERSION = process.env.SHOPIFY_API_VERSION || "2026-07";
+
+const supabase = createClient(
+  process.env.SUPABASE_URL || "https://rflabvnooobawvhxkuoi.supabase.co",
+  process.env.SUPABASE_SERVICE_ROLE_KEY || "sb_publishable_7QPCLDGw0t6YloSbtA6Y0w_weJ86qO5"
+);
+
+if (!SHOP) {
+  throw new Error("Missing SHOPIFY_STORE env var.");
+}
+if (!process.env.SHOPIFY_CLIENT_ID || !process.env.SHOPIFY_CLIENT_SECRET) {
+  throw new Error("Missing SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET env vars.");
+}
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  throw new Error("Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY env vars.");
+}
 
 async function getAccessToken() {
   if (TOKEN && Date.now() < TOKEN_EXPIRES - 60000) {
@@ -26,7 +42,7 @@ async function getAccessToken() {
       headers: {
         "Content-Type": "application/x-www-form-urlencoded"
       },
-       body: new URLSearchParams({
+      body: new URLSearchParams({
         grant_type: "client_credentials",
         client_id: process.env.SHOPIFY_CLIENT_ID || "53dfed9eb56ffec51c0f8e66178afb55",
         client_secret: process.env.SHOPIFY_CLIENT_SECRET || "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"
@@ -55,19 +71,6 @@ async function getAccessToken() {
     });
 
   return TOKEN;
-}
-
-const API_VERSION =
-  process.env.SHOPIFY_API_VERSION ||
-  "2026-07";
-
-const supabase = createClient(
-  process.env.SUPABASE_URL || "https://rflabvnooobawvhxkuoi.supabase.co",
-  process.env.SUPABASE_SERVICE_ROLE_KEY || "sb_publishable_7QPCLDGw0t6YloSbtA6Y0w_weJ86qO5"
-);
-
-if (!SHOP) {
-  throw new Error("Missing Shopify credentials.");
 }
 
 /* =========================================================
@@ -180,7 +183,7 @@ query GetProducts($cursor: String) {
     }
 
     edges {
-         node {
+      node {
         id
         title
         handle
@@ -190,8 +193,8 @@ query GetProducts($cursor: String) {
         status
         publishedAt
         metafield(namespace: "custom", key: "color1") {
-  value
-}
+          value
+        }
 
         images(first: 20) {
           edges {
@@ -200,32 +203,133 @@ query GetProducts($cursor: String) {
             }
           }
         }
-collections(first: 250) {
-  edges {
-    node {
-      handle
-    }
-  }
-}
-       variants(first:250) {
-  edges {
-    node {
-      price
-      compareAtPrice
-      inventoryQuantity
-      availableForSale
-      selectedOptions {
-        name
-        value
-      }
-    }
-  }
-}
+        collections(first: 250) {
+          edges {
+            node {
+              handle
+            }
+          }
+        }
+        variants(first: 250) {
+          edges {
+            node {
+              price
+              compareAtPrice
+              inventoryQuantity
+              availableForSale
+              selectedOptions {
+                name
+                value
+              }
+            }
+          }
+        }
       }
     }
   }
 }
 `;
+
+/* =========================================================
+   COLLECTION SEQUENCING (mirrors whatever order/sequencing
+   the out-of-stock app has already written back to Shopify)
+========================================================= */
+
+const COLLECTIONS_QUERY = `
+query GetCollections($cursor: String) {
+  collections(first: 250, after: $cursor) {
+    pageInfo { hasNextPage endCursor }
+    edges { node { handle } }
+  }
+}
+`;
+
+const COLLECTION_PRODUCT_ORDER_QUERY = `
+query GetCollectionProductOrder($handle: String!, $cursor: String) {
+  collectionByHandle(handle: $handle) {
+    products(first: 250, after: $cursor, sortKey: COLLECTION_DEFAULT) {
+      pageInfo { hasNextPage endCursor }
+      edges { node { id } }
+    }
+  }
+}
+`;
+
+async function fetchAllCollectionHandles() {
+  let handles = [];
+  let cursor = null;
+  let hasNextPage = true;
+
+  while (hasNextPage) {
+    const data = await shopifyRequest(COLLECTIONS_QUERY, { cursor });
+    const conn = data.data.collections;
+
+    handles.push(...conn.edges.map(e => e.node.handle));
+
+    hasNextPage = conn.pageInfo.hasNextPage;
+    cursor = conn.pageInfo.endCursor;
+  }
+
+  return handles;
+}
+
+// Returns { [productId]: positionIndex } for a single collection, in
+// whatever order Shopify's own COLLECTION_DEFAULT sort currently has —
+// which is exactly the order the sequencing app has already applied.
+async function fetchCollectionProductOrder(handle) {
+  let order = {};
+  let cursor = null;
+  let hasNextPage = true;
+  let index = 0;
+
+  while (hasNextPage) {
+    const data = await shopifyRequest(
+      COLLECTION_PRODUCT_ORDER_QUERY,
+      { handle, cursor }
+    );
+
+    const collection = data.data.collectionByHandle;
+    if (!collection) break;
+
+    const conn = collection.products;
+
+    conn.edges.forEach(({ node }) => {
+      order[node.id] = index++;
+    });
+
+    hasNextPage = conn.pageInfo.hasNextPage;
+    cursor = conn.pageInfo.endCursor;
+  }
+
+  return order;
+}
+
+// { [collectionHandle]: { [productId]: positionIndex } } across every
+// collection in the store. This is what makes the custom filter grid's
+// default order match the native Shopify collection page, sequencing
+// app and all — we don't try to replicate the app's push-down logic
+// ourselves, we just mirror the order it has already written to Shopify.
+async function fetchAllCollectionProductOrders() {
+  console.log("\nFetching collection sequencing from Shopify...");
+
+  const handles = await fetchAllCollectionHandles();
+  console.log(`Found ${handles.length} collections`);
+
+  const ordersByHandle = {};
+
+  for (const handle of handles) {
+    try {
+      ordersByHandle[handle] = await fetchCollectionProductOrder(handle);
+    } catch (err) {
+      console.error(`Failed to fetch sequencing for "${handle}":`, err.message);
+      ordersByHandle[handle] = {};
+    }
+  }
+
+  console.log("✅ Collection sequencing fetched\n");
+
+  return ordersByHandle;
+}
 
 /* =========================================================
    SYNC
@@ -238,6 +342,15 @@ async function syncProducts() {
     console.log("================================");
     console.log("Starting Shopify Sync...");
     console.log("================================");
+
+    // Fetched once up front so every product below can look up its
+    // position within each collection it belongs to.
+    let collectionOrders = {};
+    try {
+      collectionOrders = await fetchAllCollectionProductOrders();
+    } catch (err) {
+      console.error("⚠️ Could not fetch collection sequencing (continuing without it):", err.message);
+    }
 
     let hasNextPage = true;
     let cursor = null;
@@ -332,6 +445,19 @@ async function syncProducts() {
             node.handle
           );
         }
+
+        // { [collectionHandle]: positionIndex } — only for collections
+        // where this product actually appears in the fetched order (an
+        // out-of-stock item the app has hidden from a collection simply
+        // won't have an entry here, which is correct).
+        const collectionPositions = {};
+        collectionHandles.forEach(handle => {
+          const orderMap = collectionOrders[handle];
+          if (orderMap && Object.prototype.hasOwnProperty.call(orderMap, node.id)) {
+            collectionPositions[handle] = orderMap[node.id];
+          }
+        });
+
         return {
           id: node.id,
 
@@ -355,7 +481,7 @@ async function syncProducts() {
             0
           ),
 
-                published: Boolean(node.publishedAt),
+          published: Boolean(node.publishedAt),
 
           status: node.status,
 
@@ -375,6 +501,8 @@ async function syncProducts() {
           fabric: extractTag(tags, "Fabric"),
 
           delivery_timeline: extractTag(tags, "Delivery"),
+
+          collection_positions: JSON.stringify(collectionPositions),
 
         };
 
@@ -438,13 +566,28 @@ async function syncProducts() {
 
       batch++;
     } // End while
-    await buildFilterCache();
+
+    // Filter cache rebuild is wrapped separately: a problem here should
+    // never make the product sync itself look "failed" in history, since
+    // the products upsert above already succeeded.
+    let filterCacheOk = true;
+    try {
+      await buildFilterCache();
+    } catch (err) {
+      filterCacheOk = false;
+      console.error("\n⚠️ Filter cache rebuild failed (products still synced):");
+      console.error(err);
+    }
+
     console.log("\n================================");
     console.log("✅ Shopify Sync Completed");
     console.log(`📦 Total Products Synced: ${totalSynced}`);
+    if (!filterCacheOk) {
+      console.log("⚠️ Filter cache rebuild FAILED this run — filters may be stale.");
+    }
     console.log("================================\n");
 
-    return { success: true, totalSynced };
+    return { success: true, totalSynced, filterCacheOk };
 
   } catch (error) {
 
@@ -461,12 +604,21 @@ async function syncProducts() {
    BUILD FILTER CACHE
 ========================================================= */
 
-async function buildFilterCache() {
-  console.log("\nBuilding Filter Cache...");
+// Fetches every active/published product needed to build the filter
+// cache in small paginated batches instead of one unbounded query.
+// A single unpaginated select over the whole catalog is what was
+// timing out and silently leaving filter_cache stale/empty for some
+// collections — this keeps each round-trip small and fast regardless
+// of how large the catalog grows.
+async function fetchActiveProductsForFilterCache() {
+  const BATCH_SIZE = 500;
+  let from = 0;
+  let all = [];
 
-    const { data: products, error } = await supabase
-    .from("products")
-    .select(`
+  while (true) {
+    const { data, error } = await supabase
+      .from("products")
+      .select(`
 title,
 collection_handle,
 vendor,
@@ -479,10 +631,29 @@ variants,
 status,
 published
 `)
-    .ilike("status", "active")
-    .eq("published", true);
+      .ilike("status", "active")
+      .eq("published", true)
+      .order("id", { ascending: true })
+      .range(from, from + BATCH_SIZE - 1);
 
-  if (error) throw error;
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+
+    all = all.concat(data);
+
+    if (data.length < BATCH_SIZE) break;
+    from += BATCH_SIZE;
+  }
+
+  return all;
+}
+
+async function buildFilterCache() {
+  console.log("\nBuilding Filter Cache...");
+
+  const products = await fetchActiveProductsForFilterCache();
+
+  console.log(`Fetched ${products.length} active/published products for filter cache`);
 
   const collections = {};
 
@@ -611,11 +782,11 @@ published
     },
     updated_at: new Date().toISOString()
   }));
-  await supabase
-    .from("filter_cache")
-    .delete()
-    .neq("collection_handle", "");
 
+  // Upsert first, THEN delete stale rows that are no longer in `rows`.
+  // Doing delete-then-upsert (the previous order) means any request that
+  // lands in the gap between the two — or any failure partway through —
+  // sees a filter_cache with rows missing entirely rather than just stale.
   const { error: cacheError } = await supabase
     .from("filter_cache")
     .upsert(rows, {
@@ -623,6 +794,19 @@ published
     });
 
   if (cacheError) throw cacheError;
+
+  const currentHandles = rows.map(r => r.collection_handle);
+
+  const { error: deleteError } = await supabase
+    .from("filter_cache")
+    .delete()
+    .not("collection_handle", "in", `(${currentHandles.map(h => `"${h}"`).join(",")})`);
+
+  if (deleteError) {
+    // Stale-row cleanup failing is a non-fatal cosmetic issue (an old
+    // collection's filters lingering) — don't let it fail the whole run.
+    console.error("Filter cache stale-row cleanup failed (non-fatal):", deleteError);
+  }
 
   console.log(`✅ Filter cache updated (${rows.length} collections)`);
 

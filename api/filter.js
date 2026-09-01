@@ -40,7 +40,8 @@ variants,
 inventory_quantity,
 status,
 published,
-collection_handle
+collection_handle,
+collection_positions
 `;
 
 export default async function handler(req, res) {
@@ -270,6 +271,26 @@ export default async function handler(req, res) {
       return status === "active" && published;
     };
 
+    // Position of a product within the currently-requested collection,
+    // as last synced from Shopify's COLLECTION_DEFAULT order (i.e.
+    // whatever order the sequencing app has written back to Shopify).
+    // Returns null if unpositioned (e.g. "all", or synced before this
+    // product was added to the collection) so it can be sorted last.
+    const getCollectionPosition = (product) => {
+      if (normalizedCollection === "all") return null;
+      try {
+        const parsed =
+          typeof product.collection_positions === "string"
+            ? JSON.parse(product.collection_positions)
+            : product.collection_positions || {};
+        return Object.prototype.hasOwnProperty.call(parsed, normalizedCollection)
+          ? parsed[normalizedCollection]
+          : null;
+      } catch {
+        return null;
+      }
+    };
+
     let paginatedProducts = [];
     let total = 0;
     let productsError = null;
@@ -283,30 +304,47 @@ export default async function handler(req, res) {
 
       if (error) throw error;
 
-      let filteredIds;
+      let filteredProducts;
 
       if (size) {
         const selectedSizes = toList(size).map(normalize);
 
-        filteredIds = (data || [])
-          .filter(
-            (product) =>
-              isPublishedAndActive(product) &&
-              isProductAvailable(product) &&
-              safeParse(product.variants).some(
-                (variant) =>
-                  selectedSizes.includes(normalize(variant?.size)) &&
-                  variantIsAvailable(variant)
-              )
-          )
-          .map((p) => p.id);
+        filteredProducts = (data || []).filter(
+          (product) =>
+            isPublishedAndActive(product) &&
+            isProductAvailable(product) &&
+            safeParse(product.variants).some(
+              (variant) =>
+                selectedSizes.includes(normalize(variant?.size)) &&
+                variantIsAvailable(variant)
+            )
+        );
       } else {
-        filteredIds = (data || [])
-          .filter(
-            (product) => isPublishedAndActive(product) && isProductAvailable(product)
-          )
-          .map((p) => p.id);
+        filteredProducts = (data || []).filter(
+          (product) => isPublishedAndActive(product) && isProductAvailable(product)
+        );
       }
+
+      // Default order (no explicit sort_by), viewing a specific collection:
+      // match Shopify's own sequencing for that collection instead of
+      // created_at. Positionless products (shouldn't normally happen, but
+      // e.g. a product added to the collection since the last sync) sort
+      // after positioned ones, preserving the DB order among themselves.
+      if (!sort_by && normalizedCollection !== "all") {
+        filteredProducts = filteredProducts
+          .map((product, index) => ({ product, index }))
+          .sort((a, b) => {
+            const posA = getCollectionPosition(a.product);
+            const posB = getCollectionPosition(b.product);
+            if (posA === null && posB === null) return a.index - b.index;
+            if (posA === null) return 1;
+            if (posB === null) return -1;
+            return posA - posB;
+          })
+          .map(({ product }) => product);
+      }
+
+      const filteredIds = filteredProducts.map((p) => p.id);
 
       total = filteredIds.length;
 
