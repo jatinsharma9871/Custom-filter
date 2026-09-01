@@ -273,6 +273,30 @@ async function fetchAllCollectionHandles() {
   return handles;
 }
 
+// Runs `worker` over `items` with at most `concurrency` in flight at once.
+// shopifyRequest already retries on 429 with Shopify's Retry-After, so
+// this just controls how many requests are outstanding at a time —
+// it doesn't need its own rate-limit awareness on top of that.
+async function mapWithConcurrency(items, concurrency, worker) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function runNext() {
+    while (nextIndex < items.length) {
+      const i = nextIndex++;
+      results[i] = await worker(items[i], i);
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    runNext
+  );
+
+  await Promise.all(workers);
+  return results;
+}
+
 // Returns { [productId]: positionIndex } for a single collection, in
 // whatever order Shopify's own COLLECTION_DEFAULT sort currently has —
 // which is exactly the order the sequencing app has already applied.
@@ -316,15 +340,21 @@ async function fetchAllCollectionProductOrders() {
   console.log(`Found ${handles.length} collections`);
 
   const ordersByHandle = {};
+  let completed = 0;
 
-  for (const handle of handles) {
+  await mapWithConcurrency(handles, 6, async (handle) => {
     try {
       ordersByHandle[handle] = await fetchCollectionProductOrder(handle);
     } catch (err) {
       console.error(`Failed to fetch sequencing for "${handle}":`, err.message);
       ordersByHandle[handle] = {};
     }
-  }
+
+    completed++;
+    if (completed % 25 === 0 || completed === handles.length) {
+      console.log(`  [${completed}/${handles.length}] collections processed`);
+    }
+  });
 
   console.log("✅ Collection sequencing fetched\n");
 
