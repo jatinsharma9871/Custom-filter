@@ -176,20 +176,9 @@ export default async function handler(req, res) {
         query = query.in("vendor", toList(vendor));
       }
 
-     if (product_type) {
-  const selectedProductTypes = toList(product_type);
-
-  const orExpr = selectedProductTypes
-    .map((type) => {
-      const value = escapeForOr(type);
-      return `product_type.ilike.${value}`;
-    })
-    .join(",");
-
-  if (orExpr) {
-    query = query.or(orExpr);
-  }
-}
+      if (product_type) {
+        query = query.in("product_type", toList(product_type));
+      }
 
       if (minPrice !== undefined && minPrice !== "" && !Number.isNaN(Number(minPrice))) {
         query = query.gte("price", Number(minPrice));
