@@ -1065,4 +1065,3 @@ switch (normalizedSort) {
   }
 
 }
- 
