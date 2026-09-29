@@ -1,6 +1,7 @@
 import fetch from "node-fetch";
 import { createClient } from "@supabase/supabase-js";
-import "dotenv/config";
+import dotenv from "dotenv";
+dotenv.config();
 
 /* =========================================================
    CONFIG
@@ -164,6 +165,21 @@ async function shopifyRequest(query, variables = {}) {
   }
 
   if (json.errors?.length) {
+    const isThrottled = json.errors.some(
+      (e) => e.extensions?.code === "THROTTLED"
+    );
+
+    if (isThrottled) {
+      // Cost-budget throttling — distinct from the HTTP 429 case above.
+      // Shopify's GraphQL Admin API returns this as a 200 OK with a
+      // THROTTLED error in the body rather than a 429 status, so it
+      // needs its own retry path instead of falling through to the
+      // generic error below.
+      console.log("⚠️ GraphQL cost throttled. Waiting 2 seconds...");
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      return shopifyRequest(query, variables);
+    }
+
     console.error(json.errors);
     throw new Error("Shopify GraphQL Error");
   }
@@ -213,6 +229,7 @@ query GetProducts($cursor: String) {
         variants(first: 250) {
           edges {
             node {
+             id
               price
               compareAtPrice
               inventoryQuantity
@@ -339,10 +356,18 @@ async function fetchAllCollectionProductOrders() {
   const handles = await fetchAllCollectionHandles();
   console.log(`Found ${handles.length} collections`);
 
+  const MAX_SEQUENCE_COLLECTIONS = 80;
+  if (handles.length > MAX_SEQUENCE_COLLECTIONS) {
+    console.warn(
+      `⚠️ Shopify collection sequencing is expensive for large stores; skipping sequence fetch for ${handles.length} collections and continuing without it.`
+    );
+    return {};
+  }
+
   const ordersByHandle = {};
   let completed = 0;
 
-  await mapWithConcurrency(handles, 6, async (handle) => {
+  await mapWithConcurrency(handles, 1, async (handle) => {
     try {
       ordersByHandle[handle] = await fetchCollectionProductOrder(handle);
     } catch (err) {
@@ -447,24 +472,36 @@ async function syncProducts() {
           }
         }
 
-        const variants = node.variants.edges.map(({ node: variant }) => ({
-          price: Number(variant.price),
-          compare_at_price: Number(variant.compareAtPrice || 0),
-          inventory_quantity: Number(variant.inventoryQuantity || 0),
-          available: Boolean(variant.availableForSale),
+        const safeNumber = (value, fallback = 0) => {
+          const numeric = Number(value);
+          return Number.isFinite(numeric) ? numeric : fallback;
+        };
 
-          options: variant.selectedOptions,
+        const variants = (node.variants?.edges || []).map(({ node: variant }) => {
+          const selectedOptions = Array.isArray(variant.selectedOptions)
+            ? variant.selectedOptions
+            : [];
 
-          color:
-            variant.selectedOptions.find(
-              o => o.name.toLowerCase() === "color"
-            )?.value || null,
+          return {
+            id: variant.id,
+            price: safeNumber(variant.price),
+            compare_at_price: safeNumber(variant.compareAtPrice, 0),
+            inventory_quantity: safeNumber(variant.inventoryQuantity, 0),
+            available: Boolean(variant.availableForSale),
 
-          size:
-            variant.selectedOptions.find(
-              o => o.name.toLowerCase() === "size"
-            )?.value || null
-        }));
+            options: selectedOptions,
+
+            color:
+              selectedOptions.find(
+                o => String(o?.name || "").toLowerCase() === "color"
+              )?.value || null,
+
+            size:
+              selectedOptions.find(
+                o => String(o?.name || "").toLowerCase() === "size"
+              )?.value || null
+          };
+        });
 
         const collectionHandles =
           node.collections?.edges?.map(c => c.node.handle) || [];
@@ -507,7 +544,7 @@ async function syncProducts() {
           variants: JSON.stringify(variants),
 
           inventory_quantity: variants.reduce(
-            (sum, v) => sum + v.inventory_quantity,
+            (sum, v) => sum + (Number.isFinite(v.inventory_quantity) ? v.inventory_quantity : 0),
             0
           ),
 
