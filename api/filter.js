@@ -146,6 +146,11 @@ export default async function handler(req, res) {
 
       .replace(/[^a-z0-9-_]/g, "") || "all";
 
+    // Shared by the query builder and the post-query manual-ordering pass.
+    const normalizedSort = String(sort_by || "")
+      .trim()
+      .toLowerCase();
+
 
 
     const safeParse = (value) => {
@@ -481,16 +486,6 @@ export default async function handler(req, res) {
 // SORTING
 
 // =====================================================
-
-
-
-const normalizedSort = String(sort_by || "")
-
-  .trim()
-
-  .toLowerCase();
-
-
 
 
 
