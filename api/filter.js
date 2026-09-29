@@ -236,31 +236,119 @@ export default async function handler(req, res) {
         if (orExpr) query = query.or(orExpr);
       }
 
-      switch (sort_by) {
-        case "price-ascending":
-          query = query.order("price", { ascending: true });
-          break;
+      
+// =====================================================
+// SORTING
+// =====================================================
 
-        case "price-descending":
-          query = query.order("price", { ascending: false });
-          break;
+const normalizedSort = String(sort_by || "")
+  .trim()
+  .toLowerCase();
 
-        case "title-ascending":
-          query = query.order("title", { ascending: true });
-          break;
 
-        case "title-descending":
-          query = query.order("title", { ascending: false });
-          break;
+// -----------------------------------------------------
+// EXPLICIT SORTING
+// -----------------------------------------------------
 
-        case "created-ascending":
-          query = query.order("created_at", { ascending: true });
-          break;
+switch (normalizedSort) {
 
-        default:
-          query = query.order("created_at", { ascending: false });
+  case "price-ascending":
+
+    query = query.order(
+      "price",
+      {
+        ascending: true,
+        nullsFirst: false
       }
+    );
 
+    break;
+
+
+  case "price-descending":
+
+    query = query.order(
+      "price",
+      {
+        ascending: false,
+        nullsFirst: false
+      }
+    );
+
+    break;
+
+
+  case "title-ascending":
+
+    query = query.order(
+      "title",
+      {
+        ascending: true,
+        nullsFirst: false
+      }
+    );
+
+    break;
+
+
+  case "title-descending":
+
+    query = query.order(
+      "title",
+      {
+        ascending: false,
+        nullsFirst: false
+      }
+    );
+
+    break;
+
+
+  case "created-ascending":
+
+    query = query.order(
+      "created_at",
+      {
+        ascending: true,
+        nullsFirst: false
+      }
+    );
+
+    break;
+
+
+  case "created-descending":
+
+    query = query.order(
+      "created_at",
+      {
+        ascending: false,
+        nullsFirst: false
+      }
+    );
+
+    break;
+
+
+  case "manual":
+
+    // IMPORTANT:
+    // Do NOT apply created_at ordering here.
+    //
+    // Manual Shopify collection ordering is handled
+    // after filtering using collection_positions.
+
+    break;
+
+
+  default:
+
+    // Default collection order.
+    // Do not silently convert unknown Shopify sort
+    // values into created_at sorting.
+
+    break;
+}
       return query;
     };
 
@@ -341,7 +429,10 @@ export default async function handler(req, res) {
       // created_at. Positionless products (shouldn't normally happen, but
       // e.g. a product added to the collection since the last sync) sort
       // after positioned ones, preserving the DB order among themselves.
-      if (!sort_by && normalizedCollection !== "all") {
+    if (
+  (normalizedSort === "manual" || !normalizedSort) &&
+  normalizedCollection !== "all"
+) {
         filteredProducts = filteredProducts
           .map((product, index) => ({ product, index }))
           .sort((a, b) => {
