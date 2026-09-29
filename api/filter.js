@@ -74,6 +74,10 @@ id,
 
 price,
 
+title,
+
+created_at,
+
 variants,
 
 inventory_quantity,
@@ -845,6 +849,57 @@ switch (normalizedSort) {
 
 
 
+      // Apply explicit supported sorts after availability/size filtering and
+      // before pagination. This keeps sort order reliable even if the query
+      // layer or its result adapter does not preserve ORDER BY in the payload.
+      const sortDirections = {
+        "price-ascending": { field: "price", direction: 1 },
+        "price-descending": { field: "price", direction: -1 },
+        "title-ascending": { field: "title", direction: 1 },
+        "title-descending": { field: "title", direction: -1 },
+        "created-ascending": { field: "created_at", direction: 1 },
+        "created-descending": { field: "created_at", direction: -1 }
+      };
+      const explicitSort = sortDirections[normalizedSort];
+
+      if (explicitSort) {
+        filteredProducts = filteredProducts
+          .map((product, index) => ({ product, index }))
+          .sort((a, b) => {
+            const { field, direction } = explicitSort;
+            let comparison = 0;
+
+            if (field === "price") {
+              const priceA = Number(a.product.price);
+              const priceB = Number(b.product.price);
+              const validA = Number.isFinite(priceA);
+              const validB = Number.isFinite(priceB);
+
+              if (validA !== validB) return validA ? -1 : 1;
+              if (validA && priceA !== priceB) comparison = priceA < priceB ? -1 : 1;
+            } else if (field === "created_at") {
+              const dateA = Date.parse(a.product.created_at);
+              const dateB = Date.parse(b.product.created_at);
+              const validA = Number.isFinite(dateA);
+              const validB = Number.isFinite(dateB);
+
+              if (validA !== validB) return validA ? -1 : 1;
+              if (validA && dateA !== dateB) comparison = dateA < dateB ? -1 : 1;
+            } else {
+              comparison = String(a.product.title || "").localeCompare(
+                String(b.product.title || ""),
+                undefined,
+                { sensitivity: "base" }
+              );
+            }
+
+            return comparison === 0 ? a.index - b.index : comparison * direction;
+          })
+          .map(({ product }) => product);
+      }
+
+
+
       // Default order (no explicit sort_by), viewing a specific collection:
 
       // match Shopify's own sequencing for that collection instead of
@@ -1010,4 +1065,3 @@ switch (normalizedSort) {
   }
 
 }
-
