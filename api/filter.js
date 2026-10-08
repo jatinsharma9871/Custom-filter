@@ -1,1068 +1,324 @@
 import { createClient } from "@supabase/supabase-js";
 
-
-
 const supabase = createClient(
-
   process.env.SUPABASE_URL,
-
   process.env.SUPABASE_SERVICE_ROLE_KEY
-
 );
-
-
 
 const PAGE_LIMIT = 12;
 
-
-
-// Full columns — only ever fetched for the ~12 rows on the current page.
-
-const PRODUCT_COLUMNS = `
-
-id,
-
-title,
-
-handle,
-
-vendor,
-
-product_type,
-
-price,
-
-compare_at_price,
-
-image,
-
-images,
-
-variants,
-
-fabric,
-
-color,
-
-delivery_timeline,
-
-inventory_quantity,
-
-created_at,
-
-collection_handle,
-
-position,
-
-status,
-
-published
-
-`;
-
-
-
-// Lean columns — used for the filtering/availability/pagination pass.
-
-// Keeping this narrow is what keeps the bulk query fast; it must include
-
-// everything isProductAvailable/isPublishedAndActive/size-filtering needs.
-
-const FILTER_PASS_COLUMNS = `
-
-id,
-
-price,
-
-title,
-
-created_at,
-
-variants,
-
-inventory_quantity,
-
-status,
-
-published,
-
-collection_handle,
-
-collection_positions
-
-`;
-
-
-
 export default async function handler(req, res) {
+  // =====================================================
+  // CORS
+  // =====================================================
 
   res.setHeader("Access-Control-Allow-Origin", "*");
-
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
-
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-
-
   if (req.method === "OPTIONS") {
-
     return res.status(200).end();
-
   }
 
-
-
   try {
+    // =====================================================
+    // REQUEST PARAMETERS
+    // =====================================================
 
     const {
-
       collection,
-
       minPrice,
-
       maxPrice,
-
       vendor,
-
       product_type,
-
       color,
-
       size,
-
       fabric,
-
       delivery_timeline,
-
       page,
-
       sort_by
-
     } = req.query;
 
+    // =====================================================
+    // NORMALIZE COLLECTION
+    // =====================================================
 
+    const normalizedCollection =
+      String(collection || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]/g, "") || "all";
 
-    const normalizedCollection = String(collection || "")
+    // =====================================================
+    // NORMALIZE SORT
+    // =====================================================
 
-      .trim()
-
-      .toLowerCase()
-
-      .replace(/[^a-z0-9-_]/g, "") || "all";
-
-    // Shared by the query builder and the post-query manual-ordering pass.
     const normalizedSort = String(sort_by || "")
       .trim()
       .toLowerCase();
 
-
-
-    const safeParse = (value) => {
-
-      try {
-
-        if (!value) return [];
-
-        if (Array.isArray(value)) return value;
-
-
-
-        if (typeof value === "string") {
-
-          const parsed = JSON.parse(value);
-
-          return Array.isArray(parsed) ? parsed : [parsed];
-
-        }
-
-
-
-        return [value];
-
-      } catch {
-
-        return [String(value).replace(/[\[\]"]/g, "").trim()];
-
-      }
-
-    };
-
-
-
-    const normalize = (value) =>
-
-      String(value || "").trim().toLowerCase();
-
-
-
-    const toList = (value) =>
-
-      (Array.isArray(value) ? value : String(value || "").split(","))
-
-        .map((item) => String(item).trim())
-
-        .filter(Boolean);
-
-
-
-    // Escapes a value for safe use inside a PostgREST .or() filter string.
-
-    // Commas and parentheses are meaningful in that syntax, so they're
-
-    // stripped rather than matched literally.
-
-    const escapeForOr = (value) =>
-
-      String(value).replace(/[(),"\\*]/g, "");
-
-
-
-    const variantIsAvailable = (variant) =>
-
-      variant &&
-
-      (Number(variant.inventory_quantity) > 0 || variant.available === true);
-
-
+    // =====================================================
+    // PAGE
+    // =====================================================
 
     const currentPage = Math.max(1, Number(page) || 1);
 
+    // =====================================================
+    // HELPERS
+    // =====================================================
 
-
-    /* ================= FILTER OPTIONS (from cache) =================
-
-       This is intentionally independent of the product query below.
-
-       A slow/timed-out product fetch must never prevent the filter
-
-       panel itself from rendering. */
-
-
-
-    let filters = {
-
-      vendors: [],
-
-      productTypes: [],
-
-      colors: [],
-
-      fabrics: [],
-
-      delivery_timeline: [],
-
-      sizes: [],
-
-      priceRange: { min: 0, max: 0 }
-
-    };
-
-
-
-    try {
-
-      const { data: cacheRow, error: cacheError } = await supabase
-
-        .from("filter_cache")
-
-        .select("filters")
-
-        .eq("collection_handle", normalizedCollection)
-
-        .maybeSingle();
-
-
-
-      if (cacheError) {
-
-        console.error("Filter cache lookup error:", cacheError);
-
+    const toList = (value) => {
+      if (Array.isArray(value)) {
+        return value
+          .map((item) => String(item).trim())
+          .filter(Boolean);
       }
 
+      return String(value || "")
+        .split(",")
+        .map((item) => String(item).trim())
+        .filter(Boolean);
+    };
 
+    const parsePrice = (value) => {
+      if (
+        value === undefined ||
+        value === null ||
+        value === "" ||
+        Number.isNaN(Number(value))
+      ) {
+        return null;
+      }
+
+      return Number(value);
+    };
+
+    // =====================================================
+    // FILTER ARRAYS
+    // =====================================================
+
+    const selectedVendors = toList(vendor);
+    const selectedProductTypes = toList(product_type);
+    const selectedColors = toList(color);
+    const selectedSizes = toList(size);
+    const selectedFabrics = toList(fabric);
+    const selectedDeliveryTimeline = toList(delivery_timeline);
+
+    // =====================================================
+    // PRICE
+    // =====================================================
+
+    const parsedMinPrice = parsePrice(minPrice);
+    const parsedMaxPrice = parsePrice(maxPrice);
+
+    // =====================================================
+    // FILTER CACHE
+    //
+    // Keep this independent from product loading.
+    // If product RPC fails, filters can still render.
+    // =====================================================
+
+    let filters = {
+      vendors: [],
+      productTypes: [],
+      colors: [],
+      fabrics: [],
+      delivery_timeline: [],
+      sizes: [],
+      priceRange: {
+        min: 0,
+        max: 0
+      }
+    };
+
+    try {
+      const {
+        data: cacheRow,
+        error: cacheError
+      } = await supabase
+        .from("filter_cache")
+        .select("filters")
+        .eq("collection_handle", normalizedCollection)
+        .maybeSingle();
+
+      if (cacheError) {
+        console.error(
+          "Filter cache lookup error:",
+          cacheError
+        );
+      }
 
       const cachedFilters = cacheRow?.filters || null;
 
       const normalizeCachedNames = (arr) =>
-
-        (arr || []).map((v) => (typeof v === "object" ? v : { name: v }));
-
-
+        (arr || []).map((value) =>
+          typeof value === "object"
+            ? value
+            : { name: value }
+        );
 
       if (cachedFilters) {
-
         filters = {
+          vendors: normalizeCachedNames(
+            cachedFilters.vendors
+          ),
 
-          vendors: normalizeCachedNames(cachedFilters.vendors),
+          productTypes: normalizeCachedNames(
+            cachedFilters.productTypes
+          ),
 
-          productTypes: normalizeCachedNames(cachedFilters.productTypes),
-
-          colors: normalizeCachedNames(cachedFilters.colors),
+          colors: normalizeCachedNames(
+            cachedFilters.colors
+          ),
 
           fabrics: cachedFilters.fabrics || [],
 
-          delivery_timeline: cachedFilters.delivery_timeline || [],
+          delivery_timeline:
+            cachedFilters.delivery_timeline || [],
 
           sizes: cachedFilters.sizes || [],
 
-          priceRange: cachedFilters.priceRange || { min: 0, max: 0 }
-
+          priceRange:
+            cachedFilters.priceRange || {
+              min: 0,
+              max: 0
+            }
         };
-
       }
-
     } catch (err) {
-
-      // Never let a filter_cache problem take down the whole response.
-
-      console.error("Filter cache fetch threw:", err);
-
+      console.error(
+        "Filter cache fetch threw:",
+        err
+      );
     }
 
-
-
-    /* ================= BUILD PRODUCT QUERY (helper) ================= */
-
-
-
-    const buildQuery = (columns) => {
-
-      let query = supabase
-
-        .from("products")
-
-        .select(columns, { count: "exact" })
-
-        .ilike("status", "active")
-
-        .eq("published", true);
-
-
-
-      if (normalizedCollection && normalizedCollection !== "all") {
-
-        query = query.filter(
-
-          "collection_handle",
-
-          "cs",
-
-          `["${normalizedCollection}"]`
-
-        );
-
-      }
-
-
-
-      if (vendor) {
-
-        query = query.in("vendor", toList(vendor));
-
-      }
-
-
-
-     if (product_type) {
-
-  const selectedProductTypes = toList(product_type);
-
-
-
-  const orExpr = selectedProductTypes
-
-    .map((type) => {
-
-      const value = escapeForOr(type);
-
-      return `product_type.ilike.${value}`;
-
-    })
-
-    .join(",");
-
-
-
-  if (orExpr) {
-
-    query = query.or(orExpr);
-
-  }
-
-}
-
-
-
-      if (minPrice !== undefined && minPrice !== "" && !Number.isNaN(Number(minPrice))) {
-
-        query = query.gte("price", Number(minPrice));
-
-      }
-
-
-
-      if (maxPrice !== undefined && maxPrice !== "" && !Number.isNaN(Number(maxPrice))) {
-
-        query = query.lte("price", Number(maxPrice));
-
-      }
-
-
-
-      // color/fabric/delivery_timeline are stored as JSON-encoded text
-
-      // (e.g. `["Black","Blue"]`), so containment is checked with a
-
-      // quoted-substring ILIKE match pushed down to Postgres instead of
-
-      // pulling every row into Node to filter in memory.
-
-      // Note: inside a PostgREST .or() filter string, "*" is the wildcard
-
-      // (not "%") — it's an alias PostgREST provides specifically so
-
-      // pattern characters don't collide with the filter string's own
-
-      // reserved characters (commas, periods, etc).
-
-      // NOTE: these are leading-wildcard ILIKE scans and are the main
-
-      // remaining cost in this query. Converting color/fabric/
-
-      // delivery_timeline to real jsonb/text[] columns with a GIN index
-
-      // (and switching these to .contains()/.overlaps()) would remove
-
-      // this cost entirely — recommended as a follow-up.
-
-      if (color) {
-
-        const selectedColors = toList(color);
-
-        const orExpr = selectedColors
-
-          .map((c) => `color.ilike.*"${escapeForOr(c)}"*`)
-
-          .join(",");
-
-        if (orExpr) query = query.or(orExpr);
-
-      }
-
-
-
-      if (fabric) {
-
-        const selectedFabrics = toList(fabric);
-
-        const orExpr = selectedFabrics
-
-          .map((f) => `fabric.ilike.*${escapeForOr(f)}*`)
-
-          .join(",");
-
-        if (orExpr) query = query.or(orExpr);
-
-      }
-
-
-
-      if (delivery_timeline) {
-
-        const selectedDeliveryTimes = toList(delivery_timeline);
-
-        const orExpr = selectedDeliveryTimes
-
-          .map((d) => `delivery_timeline.ilike.*${escapeForOr(d)}*`)
-
-          .join(",");
-
-        if (orExpr) query = query.or(orExpr);
-
-      }
-
-
-
-
-
-// =====================================================
-
-// SORTING
-
-// =====================================================
-
-
-
-// -----------------------------------------------------
-
-// EXPLICIT SORTING
-
-// -----------------------------------------------------
-
-
-
-switch (normalizedSort) {
-
-
-
-  case "price-ascending":
-
-
-
-    query = query.order(
-
-      "price",
-
-      {
-
-        ascending: true,
-
-        nullsFirst: false
-
-      }
-
-    );
-
-
-
-    break;
-
-
-
-
-
-  case "price-descending":
-
-
-
-    query = query.order(
-
-      "price",
-
-      {
-
-        ascending: false,
-
-        nullsFirst: false
-
-      }
-
-    );
-
-
-
-    break;
-
-
-
-
-
-  case "title-ascending":
-
-
-
-    query = query.order(
-
-      "title",
-
-      {
-
-        ascending: true,
-
-        nullsFirst: false
-
-      }
-
-    );
-
-
-
-    break;
-
-
-
-
-
-  case "title-descending":
-
-
-
-    query = query.order(
-
-      "title",
-
-      {
-
-        ascending: false,
-
-        nullsFirst: false
-
-      }
-
-    );
-
-
-
-    break;
-
-
-
-
-
-  case "created-ascending":
-
-
-
-    query = query.order(
-
-      "created_at",
-
-      {
-
-        ascending: true,
-
-        nullsFirst: false
-
-      }
-
-    );
-
-
-
-    break;
-
-
-
-
-
-  case "created-descending":
-
-
-
-    query = query.order(
-
-      "created_at",
-
-      {
-
-        ascending: false,
-
-        nullsFirst: false
-
-      }
-
-    );
-
-
-
-    break;
-
-
-
-
-
-  case "manual":
-
-
-
-    // IMPORTANT:
-
-    // Do NOT apply created_at ordering here.
-
+    // =====================================================
+    // CALL SUPABASE RPC
     //
+    // All expensive product filtering, availability,
+    // size filtering, sorting and pagination now happens
+    // inside PostgreSQL.
+    // =====================================================
 
-    // Manual Shopify collection ordering is handled
+    const {
+      data: rpcData,
+      error: rpcError
+    } = await supabase.rpc(
+      "filter_products_paginated",
+      {
+        p_collection: normalizedCollection,
 
-    // after filtering using collection_positions.
+        p_min_price: parsedMinPrice,
 
+        p_max_price: parsedMaxPrice,
 
+        p_vendor: selectedVendors,
 
-    break;
+        p_product_type: selectedProductTypes,
 
+        p_color: selectedColors,
 
+        p_size: selectedSizes,
 
+        p_fabric: selectedFabrics,
 
+        p_delivery_timeline:
+          selectedDeliveryTimeline,
 
-  default:
+        p_page: currentPage,
 
+        p_limit: PAGE_LIMIT,
 
-
-    // Default collection order.
-
-    // Do not silently convert unknown Shopify sort
-
-    // values into created_at sorting.
-
-
-
-    break;
-
-}
-
-      return query;
-
-    };
-
-
-
-    /* ================= FETCH PRODUCTS (own try/catch) ================= */
-
-
-
-    const isProductAvailable = (product) => {
-
-      if (Number(product.inventory_quantity) > 0) return true;
-
-      return safeParse(product.variants).some(variantIsAvailable);
-
-    };
-
-
-
-    // Safety net: even though the query already filters status/published,
-
-    // this guarantees a draft/unpublished row can NEVER reach the response,
-
-    // regardless of inconsistent DB values (casing, string "true", nulls, etc.)
-
-    // or a bug anywhere upstream.
-
-    const isPublishedAndActive = (product) => {
-
-      const status = String(product.status || "").trim().toLowerCase();
-
-      const published =
-
-        product.published === true || product.published === "true";
-
-      return status === "active" && published;
-
-    };
-
-
-
-    // Position of a product within the currently-requested collection,
-
-    // as last synced from Shopify's COLLECTION_DEFAULT order (i.e.
-
-    // whatever order the sequencing app has written back to Shopify).
-
-    // Returns null if unpositioned (e.g. "all", or synced before this
-
-    // product was added to the collection) so it can be sorted last.
-
-    const getCollectionPosition = (product) => {
-
-      if (normalizedCollection === "all") return null;
-
-      try {
-
-        const parsed =
-
-          typeof product.collection_positions === "string"
-
-            ? JSON.parse(product.collection_positions)
-
-            : product.collection_positions || {};
-
-        return Object.prototype.hasOwnProperty.call(parsed, normalizedCollection)
-
-          ? parsed[normalizedCollection]
-
-          : null;
-
-      } catch {
-
-        return null;
-
+        p_sort_by: normalizedSort
       }
-
-    };
-
-
-
-    let paginatedProducts = [];
-
-    let total = 0;
-
-    let productsError = null;
-
-
-
-    try {
-
-      // Lean pass: fetch only what's needed to determine availability,
-
-      // size match, and pagination — NOT full row data. This is the
-
-      // pass most exposed to statement timeouts, so keep its payload
-
-      // as small as possible.
-
-      const { data, error } = await buildQuery(FILTER_PASS_COLUMNS);
-
-
-
-      if (error) throw error;
-
-
-
-      let filteredProducts;
-
-
-
-      if (size) {
-
-        const selectedSizes = toList(size).map(normalize);
-
-
-
-        filteredProducts = (data || []).filter(
-
-          (product) =>
-
-            isPublishedAndActive(product) &&
-
-            isProductAvailable(product) &&
-
-            safeParse(product.variants).some(
-
-              (variant) =>
-
-                selectedSizes.includes(normalize(variant?.size)) &&
-
-                variantIsAvailable(variant)
-
-            )
-
-        );
-
-      } else {
-
-        filteredProducts = (data || []).filter(
-
-          (product) => isPublishedAndActive(product) && isProductAvailable(product)
-
-        );
-
-      }
-
-
-
-      // Apply explicit supported sorts after availability/size filtering and
-      // before pagination. This keeps sort order reliable even if the query
-      // layer or its result adapter does not preserve ORDER BY in the payload.
-      const sortDirections = {
-        "price-ascending": { field: "price", direction: 1 },
-        "price-descending": { field: "price", direction: -1 },
-        "title-ascending": { field: "title", direction: 1 },
-        "title-descending": { field: "title", direction: -1 },
-        "created-ascending": { field: "created_at", direction: 1 },
-        "created-descending": { field: "created_at", direction: -1 }
-      };
-      const explicitSort = sortDirections[normalizedSort];
-
-      if (explicitSort) {
-        filteredProducts = filteredProducts
-          .map((product, index) => ({ product, index }))
-          .sort((a, b) => {
-            const { field, direction } = explicitSort;
-            let comparison = 0;
-
-            if (field === "price") {
-              const priceA = Number(a.product.price);
-              const priceB = Number(b.product.price);
-              const validA = Number.isFinite(priceA);
-              const validB = Number.isFinite(priceB);
-
-              if (validA !== validB) return validA ? -1 : 1;
-              if (validA && priceA !== priceB) comparison = priceA < priceB ? -1 : 1;
-            } else if (field === "created_at") {
-              const dateA = Date.parse(a.product.created_at);
-              const dateB = Date.parse(b.product.created_at);
-              const validA = Number.isFinite(dateA);
-              const validB = Number.isFinite(dateB);
-
-              if (validA !== validB) return validA ? -1 : 1;
-              if (validA && dateA !== dateB) comparison = dateA < dateB ? -1 : 1;
-            } else {
-              comparison = String(a.product.title || "").localeCompare(
-                String(b.product.title || ""),
-                undefined,
-                { sensitivity: "base" }
-              );
-            }
-
-            return comparison === 0 ? a.index - b.index : comparison * direction;
-          })
-          .map(({ product }) => product);
-      }
-
-
-
-      // Default order (no explicit sort_by), viewing a specific collection:
-
-      // match Shopify's own sequencing for that collection instead of
-
-      // created_at. Positionless products (shouldn't normally happen, but
-
-      // e.g. a product added to the collection since the last sync) sort
-
-      // after positioned ones, preserving the DB order among themselves.
-
-    if (
-
-  (normalizedSort === "manual" || !normalizedSort) &&
-
-  normalizedCollection !== "all"
-
-) {
-
-        filteredProducts = filteredProducts
-
-          .map((product, index) => ({ product, index }))
-
-          .sort((a, b) => {
-
-            const posA = getCollectionPosition(a.product);
-
-            const posB = getCollectionPosition(b.product);
-
-            if (posA === null && posB === null) return a.index - b.index;
-
-            if (posA === null) return 1;
-
-            if (posB === null) return -1;
-
-            return posA - posB;
-
-          })
-
-          .map(({ product }) => product);
-
-      }
-
-
-
-      const filteredIds = filteredProducts.map((p) => p.id);
-
-
-
-      total = filteredIds.length;
-
-
-
-      const pageIds = filteredIds.slice(
-
-        (currentPage - 1) * PAGE_LIMIT,
-
-        currentPage * PAGE_LIMIT
-
+    );
+
+    // =====================================================
+    // RPC ERROR
+    // =====================================================
+
+    if (rpcError) {
+      console.error(
+        "Supabase RPC error:",
+        rpcError
       );
 
+      return res.status(500).json({
+        filters,
 
+        products: [],
 
-      if (pageIds.length) {
+        pagination: {
+          total: 0,
+          totalPages: 1,
+          currentPage
+        },
 
-        // Full-detail pass: only for the ~12 ids on this page, fetched
-
-        // by primary key (cheap and index-backed regardless of catalog size).
-
-        const { data: fullData, error: fullError } = await supabase
-
-          .from("products")
-
-          .select(PRODUCT_COLUMNS)
-
-          .in("id", pageIds);
-
-
-
-        if (fullError) throw fullError;
-
-
-
-        // .in() doesn't preserve order, so restore the sort order that
-
-        // the lean pass already established.
-
-        const byId = new Map((fullData || []).map((p) => [p.id, p]));
-
-        paginatedProducts = pageIds
-
-          .map((id) => byId.get(id))
-
-          .filter(Boolean)
-
-          .map((product) => {
-
-            const { status, published, ...rest } = product;
-
-            return {
-
-              ...rest,
-
-              price: Number(product.price || 0),
-
-              compare_at_price: Number(product.compare_at_price || 0)
-
-            };
-
-          });
-
-      }
-
-    } catch (err) {
-
-      console.error("Product query error:", err);
-
-      productsError = err.message || "Failed to load products";
-
-      // Deliberately not returning here — filters above are still valid
-
-      // and should still reach the client.
-
+        productsError:
+          rpcError.message ||
+          "Failed to load products"
+      });
     }
 
+    // =====================================================
+    // RPC RESPONSE
+    // =====================================================
 
+    const rpcResult =
+      rpcData || {
+        total: 0,
+        products: []
+      };
 
-    const totalPages = Math.max(1, Math.ceil(total / PAGE_LIMIT));
+    const products = Array.isArray(
+      rpcResult.products
+    )
+      ? rpcResult.products
+      : [];
 
+    const total = Number(
+      rpcResult.total || 0
+    );
 
+    const totalPages = Math.max(
+      1,
+      Math.ceil(total / PAGE_LIMIT)
+    );
+
+    // =====================================================
+    // FINAL RESPONSE
+    //
+    // Keeps the same structure your frontend already uses.
+    // =====================================================
 
     return res.status(200).json({
-
       filters,
 
-      products: paginatedProducts,
+      products,
 
       pagination: {
-
         total,
 
         totalPages,
 
         currentPage
-
-      },
-
-      ...(productsError ? { productsError } : {})
-
+      }
     });
 
   } catch (error) {
+    // =====================================================
+    // OUTER ERROR
+    // =====================================================
 
-    console.error("API ERROR:", error);
-
-
+    console.error(
+      "API ERROR:",
+      error
+    );
 
     return res.status(500).json({
-
-      error: error.message || "Server error"
-
+      error:
+        error.message ||
+        "Server error"
     });
-
   }
-
 }
-
