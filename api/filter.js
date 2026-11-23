@@ -47,7 +47,7 @@ export default async function handler(req, res) {
       String(collection || "")
         .trim()
         .toLowerCase()
-        .replace(/[^a-z0-9-_]/g, "") || "all";
+        .replace(/[^a-z0-9_-]/g, "") || "all";
 
     // =====================================================
     // NORMALIZE SORT
@@ -61,7 +61,12 @@ export default async function handler(req, res) {
     // PAGE
     // =====================================================
 
-    const currentPage = Math.max(1, Number(page) || 1);
+    const requestedPage = Number(page);
+
+const currentPage =
+  Number.isSafeInteger(requestedPage) && requestedPage > 0
+    ? Math.min(requestedPage, 10000)
+    : 1;
 
     // =====================================================
     // HELPERS
